@@ -16,19 +16,19 @@ Or import and call from a notebook:
 # CONFIG  — edit this block
 # =============================================================================
 
-OBSERVATORY = 'xmm'    # 'nustar' | 'xmm'  ← set this first
+OBSERVATORY = 'nustar'    # 'nustar' | 'xmm'  ← set this first
 
 # ---------------------------------------------------------------------------
 # NuSTAR settings  (used when OBSERVATORY = 'nustar')
 # ---------------------------------------------------------------------------
 
 NUSTAR = dict(
-    base_path         = "/Users/sanjanagupta/Documents/data/NuSTAR/2017gas/",
-    obsid             = "80202052002",
+    base_path         = "/Users/sanjanagupta/Documents/data/NuSTAR/2012ap/",
+    obsid             = "80802504004",
     caldb_dir         = "/Users/sanjanagupta/Documents/software/caldb",
 
-    ra                = "20:17:11.360",     # "HH:MM:SS.ss" or decimal degrees
-    dec               = "+58:12:08.10",     # "±DD:MM:SS.ss" or decimal degrees
+    ra                = "05:00:13.721",     # "HH:MM:SS.ss" or decimal degrees
+    dec               = "-03:20:51.22",     # "±DD:MM:SS.ss" or decimal degrees
 
     src_radius_arcsec = 60.0,   # NuSTAR EEF: ~50% at 20", ~60% at 30", ~80% at 60"
     bkg_radius_arcsec = 200.0,  # outer radius of background annulus

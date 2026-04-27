@@ -84,6 +84,7 @@ def select_regions_interactive(evt_x, evt_y, cx_evt, cy_evt, pscale_evt,
     #   Sl src : left=0.73  bot=0.42  w=0.21  h=0.025
     #   Sl bkg : left=0.73  bot=0.34  w=0.21  h=0.025
     #   Sl fac : left=0.73  bot=0.26  w=0.21  h=0.025
+    #   RstView: left=0.64  bot=0.21  w=0.32  h=0.04
     #   Confirm: left=0.64  bot=0.12  w=0.15  h=0.08
     #   Reset  : left=0.81  bot=0.12  w=0.15  h=0.08
     # =========================================================================
@@ -95,6 +96,7 @@ def select_regions_interactive(evt_x, evt_y, cx_evt, cy_evt, pscale_evt,
     ax_sl_s  = fig.add_axes([0.73, 0.42, 0.21, 0.025])
     ax_sl_b  = fig.add_axes([0.73, 0.34, 0.21, 0.025])
     ax_sl_f  = fig.add_axes([0.73, 0.26, 0.21, 0.025])
+    ax_rstv  = fig.add_axes([0.64, 0.21, 0.32, 0.04])
     ax_ok    = fig.add_axes([0.64, 0.12, 0.15, 0.08])
     ax_rst   = fig.add_axes([0.81, 0.12, 0.15, 0.08])
 
@@ -106,8 +108,8 @@ def select_regions_interactive(evt_x, evt_y, cx_evt, cy_evt, pscale_evt,
     ax_img.set_xlabel('$\\Delta X$ (arcsec)', fontsize=14)
     ax_img.set_ylabel('$\\Delta Y$ (arcsec)', fontsize=14)
     ax_img.tick_params(axis='both', labelsize=12)
-    ax_img.set_title(f'{label} — click image to place selected region',
-                     fontsize=15, pad=8)
+    ax_img.set_title(f'{label} — click to place region  |  scroll wheel to zoom',
+                     fontsize=14, pad=8)
 
     # Circles -----------------------------------------------------------------
     src_circ = Circle((0, 0), state['src_radius_arcsec'],
@@ -131,6 +133,12 @@ def select_regions_interactive(evt_x, evt_y, cx_evt, cy_evt, pscale_evt,
     bkg_ch_v, = ax_img.plot([0, 0], [0, 0], '-', color='orange', lw=1.0,
                              zorder=6, visible=False)
     ax_img.legend(loc='upper right', fontsize=11, framealpha=0.7)
+
+    # Store original view limits for "Reset view" button.
+    # Use the pre-computed ext directly — avoids calling get_xlim()/get_ylim()
+    # before the figure is drawn, which can trigger a premature render on some backends.
+    orig_xlim = [ext[0], ext[1]]
+    orig_ylim = [ext[2], ext[3]]
 
     # ---- Info panel ---------------------------------------------------------
     ax_info.axis('off')
@@ -169,8 +177,10 @@ def select_regions_interactive(evt_x, evt_y, cx_evt, cy_evt, pscale_evt,
         sl.valtext.set_fontsize(13)
 
     # ---- Buttons ------------------------------------------------------------
-    btn_ok  = Button(ax_ok,  'Confirm', color='#d4edda', hovercolor='#c3e6cb')
-    btn_rst = Button(ax_rst, 'Reset',   color='#f8d7da', hovercolor='#f5c6cb')
+    btn_rstv = Button(ax_rstv, 'Reset view', color='#e8e8e8', hovercolor='#d0d0d0')
+    btn_ok   = Button(ax_ok,   'Confirm',    color='#d4edda', hovercolor='#c3e6cb')
+    btn_rst  = Button(ax_rst,  'Reset',      color='#f8d7da', hovercolor='#f5c6cb')
+    btn_rstv.label.set_fontsize(13)
     btn_ok.label.set_fontsize(14)
     btn_rst.label.set_fontsize(14)
 
@@ -264,6 +274,23 @@ def select_regions_interactive(evt_x, evt_y, cx_evt, cy_evt, pscale_evt,
         state['bkg_inner_factor'] = val
         _redraw()
 
+    def on_scroll(event):
+        """Zoom in/out centred on the cursor position."""
+        if event.inaxes is not ax_img or event.xdata is None:
+            return
+        factor = 0.65 if event.button == 'up' else 1.55
+        xc, yc = event.xdata, event.ydata
+        xl, xr = ax_img.get_xlim()
+        yb, yt = ax_img.get_ylim()
+        ax_img.set_xlim([xc + (xl - xc) * factor, xc + (xr - xc) * factor])
+        ax_img.set_ylim([yc + (yb - yc) * factor, yc + (yt - yc) * factor])
+        fig.canvas.draw_idle()
+
+    def on_reset_view(_):
+        ax_img.set_xlim(orig_xlim)
+        ax_img.set_ylim(orig_ylim)
+        fig.canvas.draw_idle()
+
     def on_confirm(_):
         state['confirmed'] = True
         plt.close(fig)
@@ -278,9 +305,11 @@ def select_regions_interactive(evt_x, evt_y, cx_evt, cy_evt, pscale_evt,
         _redraw()
 
     fig.canvas.mpl_connect('button_press_event', on_click)
+    fig.canvas.mpl_connect('scroll_event',       on_scroll)
     sl_src.on_changed(on_src_slider)
     sl_bkg.on_changed(on_bkg_slider)
     sl_fac.on_changed(on_fac_slider)
+    btn_rstv.on_clicked(on_reset_view)
     btn_ok.on_clicked(on_confirm)
     btn_rst.on_clicked(on_reset)
 
