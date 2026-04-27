@@ -16,7 +16,7 @@ Or import and call from a notebook:
 # CONFIG  — edit this block
 # =============================================================================
 
-OBSERVATORY = 'nustar'    # 'nustar' | 'xmm'  ← set this first
+OBSERVATORY = 'xmm'    # 'nustar' | 'xmm'  ← set this first
 
 # ---------------------------------------------------------------------------
 # NuSTAR settings  (used when OBSERVATORY = 'nustar')
@@ -63,15 +63,17 @@ NUSTAR = dict(
 # ---------------------------------------------------------------------------
 
 XMM = dict(
-    data_dir          = "",             # ODF working directory (epproc/emproc output)
-    obsid             = "",             # e.g. '0881990901'
+    data_dir          = "/Users/sanjanagupta/Documents/data/XMM/2012ap_/ODF",             # ODF working directory (epproc/emproc output)
+    obsid             = "0881990901",             # e.g. '0881990901'
 
-    ra                = "",             # "HH:MM:SS.ss" or decimal degrees
-    dec               = "",             # "±DD:MM:SS.ss" or decimal degrees
+    ra                = "05:00:13.721",             # "HH:MM:SS.ss" or decimal degrees
+    dec               = "-03:20:51.22",             # "±DD:MM:SS.ss" or decimal degrees
 
     src_radius_arcsec = 20.0,   # MOS on-axis FWHM ~4.5", PN ~6"; typical 15–20"
     bkg_radius_arcsec = 60.0,
     bkg_inner_factor  = 1.5,
+    psf_fwhm_arcsec   = 5.0,   # used for PSF-weighted exposure diagnostic only
+                                # MOS on-axis ~4.5", PN on-axis ~6"
 
     energy_band       = 'full', # 'full' (0.5–10) | 'soft' (0.5–2) | 'hard' (2–10) |
                                 # 'medium' (1–2) | 'ultrasoft' (0.2–0.5) |
@@ -87,10 +89,11 @@ XMM = dict(
 
     confidence_levels = [0.9545, 0.9973],
 
-    psf_dir           = "",     # leave empty to use bundled PSF files
-                                # or set to your SAS_CCFPATH directory
+    psf_dir           = "",     # path to directory containing XRT[1-3]_XPSF_*.CCF files
+                                # leave empty if you have copied them to xray_uplim/data/xmm/psf/
+                                # download from: https://www.cosmos.esa.int/web/xmm-newton/current-calibration-files
 
-    use_gui           = False,
+    use_gui           = True,
     save_plots        = True,
 )
 

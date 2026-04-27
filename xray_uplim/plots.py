@@ -47,7 +47,7 @@ matplotlib.rcParams.update({
 # ---------------------------------------------------------------------------
 
 def radial_profile(evt_x, evt_y, cx_evt, cy_evt, pscale_evt,
-                   module, e_lo, e_hi, obsid, cfg, out_dir):
+                   label, e_lo, e_hi, obsid, cfg, out_dir):
     """
     Save a log-scale radial surface-density profile.
 
@@ -56,10 +56,10 @@ def radial_profile(evt_x, evt_y, cx_evt, cy_evt, pscale_evt,
     evt_x, evt_y : array  — event pixel coordinates (energy-filtered)
     cx_evt, cy_evt : float — source pixel position in event coordinates
     pscale_evt   : float  — event pixel scale in arcsec/pix
-    module       : str    — 'A' or 'B'
+    label        : str    — instrument label, e.g. 'FPMA', 'MOS1', 'PN'
     e_lo, e_hi   : float  — energy band in keV
     obsid        : str
-    cfg          : Config
+    cfg          : Config or XMMConfig
     out_dir      : str    — output directory
     """
     r_arcsec = (np.sqrt((evt_x - cx_evt)**2 + (evt_y - cy_evt)**2)
@@ -88,14 +88,14 @@ def radial_profile(evt_x, evt_y, cx_evt, cy_evt, pscale_evt,
     ax.set_xlabel('Radius (arcsec)')
     ax.set_ylabel('Surface density (cts arcsec$^{-2}$)')
     ax.set_title(
-        f'NuSTAR FPM{module}  |  {e_lo:.1f}–{e_hi:.1f} keV  |  OBSID {obsid}')
+        f'{label}  |  {e_lo:.1f}–{e_hi:.1f} keV  |  OBSID {obsid}')
     ax.legend(loc='upper right')
     ax.set_yscale('log')
     ax.set_xlim(0, max_r)
     fig.tight_layout()
 
     fname = os.path.join(
-        out_dir, f"nustar_radial_FPM{module}_{e_lo:.1f}-{e_hi:.1f}keV.png")
+        out_dir, f"radial_{label}_{e_lo:.1f}-{e_hi:.1f}keV.png")
     fig.savefig(fname, dpi=150, bbox_inches='tight')
     plt.close(fig)
     print(f"  Radial profile plot  -> {fname}")
@@ -105,7 +105,7 @@ def radial_profile(evt_x, evt_y, cx_evt, cy_evt, pscale_evt,
 # Exposure-map histogram
 # ---------------------------------------------------------------------------
 
-def exposure_histogram(meta, exp_stats, module, cfg, out_dir):
+def exposure_histogram(meta, exp_stats, label, cfg, out_dir):
     """
     Save a histogram of exposure-map pixel values inside the source aperture.
 
@@ -113,8 +113,8 @@ def exposure_histogram(meta, exp_stats, module, cfg, out_dir):
     ----------
     meta      : dict   — from compute_exposure_stats()
     exp_stats : dict   — {'median': float, 'mean': float, 'psf_weighted': float}
-    module    : str
-    cfg       : Config
+    label     : str    — instrument label, e.g. 'FPMA', 'MOS1', 'PN'
+    cfg       : Config or XMMConfig
     out_dir   : str
     """
     vals = meta['exp_values']
@@ -136,12 +136,12 @@ def exposure_histogram(meta, exp_stats, module, cfg, out_dir):
     ax.set_xlabel('Exposure time (ks)')
     ax.set_ylabel('Number of pixels')
     ax.set_title(
-        f'FPM{module} — Exposure-map distribution in '
+        f'{label} — Exposure-map distribution in '
         f'{cfg.src_radius_arcsec:.0f}" aperture')
     ax.legend()
     fig.tight_layout()
 
-    fname = os.path.join(out_dir, f"nustar_expmap_hist_FPM{module}.png")
+    fname = os.path.join(out_dir, f"expmap_hist_{label}.png")
     fig.savefig(fname, dpi=150, bbox_inches='tight')
     plt.close(fig)
     print(f"  Exposure histogram   -> {fname}")
@@ -167,7 +167,7 @@ def _fmt_dec(dec_deg):
 
 
 def region_image(evt_x, evt_y, cx_evt, cy_evt, pscale_evt,
-                 module, e_lo, e_hi, obsid, cfg, out_dir,
+                 label, e_lo, e_hi, obsid, cfg, out_dir,
                  src_ra_deg=None, src_dec_deg=None,
                  bkg_cx_evt=None, bkg_cy_evt=None):
     """
@@ -269,7 +269,7 @@ def region_image(evt_x, evt_y, cx_evt, cy_evt, pscale_evt,
 
     ax.legend(loc='upper right', framealpha=0.8, fontsize=8)
     ax.set_title(
-        f'NuSTAR FPM{module}  |  {e_lo:.1f}–{e_hi:.1f} keV  |  OBSID {obsid}',
+        f'{label}  |  {e_lo:.1f}–{e_hi:.1f} keV  |  OBSID {obsid}',
         fontsize=10)
 
     # ---- Axes: RA/Dec labels when source position is known ------------------
@@ -304,7 +304,7 @@ def region_image(evt_x, evt_y, cx_evt, cy_evt, pscale_evt,
 
     fig.tight_layout()
 
-    stem = f"nustar_regions_FPM{module}_{e_lo:.1f}-{e_hi:.1f}keV"
+    stem = f"regions_{label}_{e_lo:.1f}-{e_hi:.1f}keV"
 
     png_path = os.path.join(out_dir, f"{stem}.png")
     fig.savefig(png_path, dpi=300, bbox_inches='tight')

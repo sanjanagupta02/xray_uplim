@@ -302,7 +302,7 @@ def process_module(module, src_coord, cfg):
         from ..region_selector import select_regions_interactive
         print(f"\n  Opening interactive region selector for FPM{module}...")
         sel = select_regions_interactive(
-            evt_x, evt_y, cx_evt, cy_evt, pscale_evt, cfg, module)
+            evt_x, evt_y, cx_evt, cy_evt, pscale_evt, cfg, f'FPM{module}')
 
         cx_evt     = sel['cx']
         cy_evt     = sel['cy']
@@ -450,10 +450,10 @@ def process_module(module, src_coord, cfg):
     # -- Diagnostic plots -----------------------------------------------------
     if cfg.save_plots:
         radial_profile(evt_x, evt_y, cx_evt, cy_evt, pscale_evt,
-                       module, e_lo, e_hi, cfg.obsid, cfg, out_dir)
-        exposure_histogram(exp_meta, exp_stats, module, cfg, out_dir)
+                       f'FPM{module}', e_lo, e_hi, cfg.obsid, cfg, out_dir)
+        exposure_histogram(exp_meta, exp_stats, f'FPM{module}', cfg, out_dir)
         region_image(evt_x, evt_y, cx_evt, cy_evt, pscale_evt,
-                     module, e_lo, e_hi, cfg.obsid, cfg, out_dir,
+                     f'FPM{module}', e_lo, e_hi, cfg.obsid, cfg, out_dir,
                      src_ra_deg=src_coord.ra.deg,
                      src_dec_deg=src_coord.dec.deg,
                      bkg_cx_evt=bkg_cx_evt,

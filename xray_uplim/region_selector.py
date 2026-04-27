@@ -25,7 +25,7 @@ from matplotlib.widgets import Slider, Button, RadioButtons
 
 
 def select_regions_interactive(evt_x, evt_y, cx_evt, cy_evt, pscale_evt,
-                                cfg, module):
+                                cfg, label):
     """
     Open an interactive region-selection window and return confirmed values.
 
@@ -106,7 +106,7 @@ def select_regions_interactive(evt_x, evt_y, cx_evt, cy_evt, pscale_evt,
     ax_img.set_xlabel('$\\Delta X$ (arcsec)', fontsize=14)
     ax_img.set_ylabel('$\\Delta Y$ (arcsec)', fontsize=14)
     ax_img.tick_params(axis='both', labelsize=12)
-    ax_img.set_title(f'FPM{module} — click image to place selected region',
+    ax_img.set_title(f'{label} — click image to place selected region',
                      fontsize=15, pad=8)
 
     # Circles -----------------------------------------------------------------

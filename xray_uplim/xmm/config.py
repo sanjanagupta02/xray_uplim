@@ -88,7 +88,10 @@ class XMMConfig:
         One-sided confidence levels, e.g. [0.9545, 0.9973] ≈ [2σ, 3σ].
     psf_dir : str
         Path to directory containing XRT[1-3]_XPSF_*.CCF files.
-        Leave empty to use the bundled copy in xray_uplim/data/xmm/psf/.
+        Leave empty if you have manually placed the CCF files in
+        xray_uplim/data/xmm/psf/ (not bundled with the package — too large).
+        Download from:
+        https://www.cosmos.esa.int/web/xmm-newton/current-calibration-files
     use_gui : bool
         Open interactive region selector before each instrument.
     save_plots : bool
