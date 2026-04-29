@@ -37,6 +37,8 @@ Download:
 import os
 import re
 import math
+import glob
+import warnings
 from dataclasses import dataclass, field
 from typing import List, Union, Tuple
 
@@ -218,25 +220,58 @@ class XMMConfig:
         Return path to directory containing XMM PSF CCF files.
 
         Search order:
-            1. cfg.psf_dir  (user-specified)
-            2. xray_uplim/data/xmm/psf/  (bundled)
+            1. cfg.psf_dir            (user-specified)
+            2. $SAS_CCFPATH env var   (set automatically by SAS initialisation)
+            3. xray_uplim/data/xmm/psf/  (manually placed files)
         """
+        def _has_psf_files(d):
+            """True if directory d contains at least one XRT?_XPSF_*.CCF file."""
+            return bool(glob.glob(os.path.join(d, 'XRT?_XPSF_*.CCF')))
+
+        # 1. Explicit user setting
         if self.psf_dir:
             if not os.path.isdir(self.psf_dir):
                 raise FileNotFoundError(
                     f"psf_dir does not exist: {self.psf_dir}")
+            if not _has_psf_files(self.psf_dir):
+                raise FileNotFoundError(
+                    f"psf_dir exists but contains no XRT?_XPSF_*.CCF files:\n"
+                    f"  {self.psf_dir}\n"
+                    "Download from: "
+                    "https://www.cosmos.esa.int/web/xmm-newton/current-calibration-files")
             return self.psf_dir
+
+        # 2. $SAS_CCFPATH — may be colon-separated list of directories
+        sas_ccfpath = os.environ.get('SAS_CCFPATH', '')
+        if sas_ccfpath:
+            for d in sas_ccfpath.split(':'):
+                d = d.strip()
+                if d and os.path.isdir(d) and _has_psf_files(d):
+                    return d
+            # Env var set but CCF files not found in any listed directory
+            warnings.warn(
+                f"$SAS_CCFPATH is set ({sas_ccfpath!r}) but no XRT?_XPSF_*.CCF "
+                "files were found in any of its directories. "
+                "Falling back to xray_uplim/data/xmm/psf/.",
+                UserWarning, stacklevel=3)
+
+        # 3. Manually placed files in the package data directory
         bundled = os.path.join(
             os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
             'data', 'xmm', 'psf')
-        if os.path.isdir(bundled):
+        if os.path.isdir(bundled) and _has_psf_files(bundled):
             return bundled
+
         raise FileNotFoundError(
-            "XMM PSF directory not found. Either:\n"
-            "  1. Set psf_dir= in your config to your SAS_CCFPATH directory, or\n"
-            "  2. Copy XRT[1-3]_XPSF_*.CCF files to xray_uplim/data/xmm/psf/.\n"
-            "Download from: "
-            "https://www.cosmos.esa.int/web/xmm-newton/current-calibration-files")
+            "XMM PSF CCF files not found. Search order tried:\n"
+            "  1. psf_dir= setting in run_uplim.py\n"
+            "  2. $SAS_CCFPATH environment variable (set by SAS initialisation)\n"
+            "  3. xray_uplim/data/xmm/psf/\n"
+            "If SAS is installed, source your SAS setup script so $SAS_CCFPATH is\n"
+            "exported, then re-run — no other config change needed.\n"
+            "To download: "
+            "https://www.cosmos.esa.int/web/xmm-newton/current-calibration-files\n"
+            "(search XRT1_XPSF, XRT2_XPSF, XRT3_XPSF)")
 
     def validate(self):
         """Raise ValueError for obviously wrong settings."""

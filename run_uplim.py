@@ -25,7 +25,7 @@ OBSERVATORY = 'nustar'    # 'nustar' | 'xmm'  ← set this first
 NUSTAR = dict(
     base_path         = "/Users/sanjanagupta/Documents/data/NuSTAR/2012ap/",
     obsid             = "80802504004",
-    caldb_dir         = "/Users/sanjanagupta/Documents/software/caldb",
+    caldb_dir         = "/Users/sanjanagupta/Documents/software/caldb",  # or "" to use $CALDB
 
     ra                = "05:00:13.721",     # "HH:MM:SS.ss" or decimal degrees
     dec               = "-03:20:51.22",     # "±DD:MM:SS.ss" or decimal degrees
@@ -89,9 +89,10 @@ XMM = dict(
 
     confidence_levels = [0.9545, 0.9973],
 
-    psf_dir           = "",     # path to directory containing XRT[1-3]_XPSF_*.CCF files
-                                # leave empty if you have copied them to xray_uplim/data/xmm/psf/
-                                # download from: https://www.cosmos.esa.int/web/xmm-newton/current-calibration-files
+    psf_dir           = "",     # leave empty — $SAS_CCFPATH is checked automatically.
+                                # if SAS is initialised in your shell, no change needed here.
+                                # or set explicitly: psf_dir = "/path/to/dir/with/XRT?_XPSF_*.CCF"
+                                # download: https://www.cosmos.esa.int/web/xmm-newton/current-calibration-files
 
     use_gui           = True,
     save_plots        = True,
