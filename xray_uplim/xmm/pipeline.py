@@ -133,12 +133,14 @@ def _print_results_table(N_src, B_scaled, t_eff, N_bkg_raw, area_ratio,
 # =============================================================================
 
 def _build_csv_rows(instrument, e_lo, e_hi, N_src, N_bkg_raw, B_scaled,
-                    area_ratio, t_eff, ul_results, eef_info, obsid):
+                    area_ratio, t_eff, ul_results, eef_info, obsid,
+                    date_obs=''):
     """Build a list of CSV row dicts (one per confidence level) for one instrument."""
     rows = []
     for r in ul_results:
         row = {
             'obsid':              obsid,
+            'date_obs':           date_obs,
             'instrument':         instrument,
             'energy_lo_kev':      e_lo,
             'energy_hi_kev':      e_hi,
@@ -197,7 +199,7 @@ def write_results_csv(rows, out_dir, obsid):
     csv_path = os.path.join(out_dir, f"xmm_uplim_{obsid}.csv")
 
     fieldnames = [
-        'obsid', 'instrument', 'energy_lo_kev', 'energy_hi_kev',
+        'obsid', 'date_obs', 'instrument', 'energy_lo_kev', 'energy_hi_kev',
         'N_src', 'N_bkg_raw', 'B_scaled', 'area_ratio',
         't_eff_s',
         'theta_arcmin', 'eef', 'energy_ev', 'psf_file', 'eef_extrapolated',
@@ -309,6 +311,7 @@ def process_instrument(instrument: str, cfg: XMMConfig):
 
     # -- Step 2: load events --------------------------------------------------
     events, evt_hdr, pi_lo, pi_hi = load_events(cfg, evt_file, instrument)
+    date_obs = str(evt_hdr.get('DATE-OBS', '')).strip()
 
     # -- Step 3: load exposure map --------------------------------------------
     exp_data, exp_hdr = load_expmap(exp_file)
@@ -455,10 +458,12 @@ def process_instrument(instrument: str, cfg: XMMConfig):
     # -- Step 11: CSV rows ----------------------------------------------------
     csv_rows = _build_csv_rows(
         instrument, e_lo, e_hi, N_src, N_bkg_raw, B_scaled,
-        area_ratio, t_eff, ul_results, eef_info, cfg.obsid)
+        area_ratio, t_eff, ul_results, eef_info, cfg.obsid,
+        date_obs=date_obs)
 
     return {
         'instrument': instrument,
+        'date_obs':   date_obs,
         'N_src':      N_src,
         'N_bkg_raw':  N_bkg_raw,
         'B_scaled':   B_scaled,

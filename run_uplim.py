@@ -16,7 +16,7 @@ Or import and call from a notebook:
 # CONFIG  — edit this block
 # =============================================================================
 
-OBSERVATORY = 'swift'    # 'nustar' | 'xmm' | 'swift'  ← set this first
+OBSERVATORY = 'xmm'    # 'nustar' | 'xmm' | 'swift'  ← set this first
 
 # ---------------------------------------------------------------------------
 # NuSTAR settings  (used when OBSERVATORY = 'nustar')

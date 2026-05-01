@@ -126,17 +126,20 @@ def _print_results_table(N_src, B_scaled, t_eff, N_bkg_raw, area_ratio,
 
 def _build_csv_rows(mode, e_lo, e_hi, N_src, N_bkg_raw, B_scaled,
                     area_ratio, t_eff, ul_results, eef_info, obsid,
-                    result_type='individual'):
+                    result_type='individual', date_obs=''):
     """
     Build a list of CSV row dicts (one per confidence level).
 
     result_type : 'individual' for per-obs rows, 'combined' for the stacked total.
+    date_obs    : DATE-OBS from the event file header (ISO 8601 string).
+                  For combined rows this is the date of the first observation.
     """
     rows = []
     for r in ul_results:
         row = {
             'result_type':         result_type,
             'obsid':               obsid,
+            'date_obs':            date_obs,
             'mode':                mode,
             'energy_lo_kev':       e_lo,
             'energy_hi_kev':       e_hi,
@@ -184,7 +187,7 @@ def write_results_csv(rows, out_dir, obsid):
     csv_path = os.path.join(out_dir, f"swift_uplim_{obsid}.csv")
 
     fieldnames = [
-        'result_type', 'obsid', 'mode', 'energy_lo_kev', 'energy_hi_kev',
+        'result_type', 'obsid', 'date_obs', 'mode', 'energy_lo_kev', 'energy_hi_kev',
         'N_src', 'N_bkg_raw', 'B_scaled', 'area_ratio',
         't_eff_s',
         'theta_arcmin', 'eef', 'energy_kev', 'psf_file',
@@ -287,6 +290,8 @@ def _load_one_obs(cfg, obs_root, obsid_str):
     else:
         print("  Source position is inside the event image. Good.")
 
+    date_obs = str(evt_hdr.get('DATE-OBS', '')).strip()
+
     return dict(
         mode=mode, events=events, evt_hdr=evt_hdr,
         evt_x=evt_x, evt_y=evt_y,
@@ -294,6 +299,7 @@ def _load_one_obs(cfg, obs_root, obsid_str):
         exp_data=exp_data, exp_hdr=exp_hdr,
         pi_lo=pi_lo, pi_hi=pi_hi,
         src_coord=src_coord,
+        date_obs=date_obs,
     )
 
 
@@ -551,6 +557,7 @@ def process_observation(cfg: SwiftConfig):
             cfg_obs, obs, bkg_cx_evt, bkg_cy_evt, e_lo, e_hi)
         raw['obs_root']   = obs_root
         raw['obsid_str']  = obsid_str
+        raw['date_obs']   = obs.get('date_obs', '')
         raw['evt_x']      = obs['evt_x']
         raw['evt_y']      = obs['evt_y']
         raw['src_coord']  = obs['src_coord']
@@ -616,7 +623,8 @@ def process_observation(cfg: SwiftConfig):
             r['N_src'], r['N_bkg_raw'], r['B_scaled'],
             r['area_ratio'], r['t_eff'],
             r['ul'], r['eef_info'], r['obsid_str'],
-            result_type='individual')
+            result_type='individual',
+            date_obs=r.get('date_obs', ''))
 
         if n_obs > 1:
             ul3_i = next((u for u in r['ul'] if u['cl'] >= 0.997), r['ul'][-1])
@@ -663,11 +671,13 @@ def process_observation(cfg: SwiftConfig):
     # Step 11: CSV — per-obs rows first, then combined row                  #
     # ------------------------------------------------------------------ #
     obsid_label = (obsids[0] if n_obs == 1 else "+".join(obsids))
+    # For combined date_obs use the first observation's date
+    combined_date = per_obs[0].get('date_obs', '') if per_obs else ''
     combined_csv_rows = _build_csv_rows(
         mode, e_lo, e_hi,
         N_src_total, N_bkg_raw_total, B_scaled_total,
         area_ratio, T_eff_total, ul_results, eef_info, obsid_label,
-        result_type='combined')
+        result_type='combined', date_obs=combined_date)
 
     all_csv_rows = []
     if n_obs > 1:

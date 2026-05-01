@@ -163,7 +163,7 @@ def write_results_csv(rows, out_dir, obsid):
     csv_path = os.path.join(out_dir, f"nustar_uplim_{obsid}.csv")
 
     fieldnames = [
-        'obsid', 'module', 'energy_lo_kev', 'energy_hi_kev',
+        'obsid', 'date_obs', 'module', 'energy_lo_kev', 'energy_hi_kev',
         'N_src', 'N_bkg_raw', 'B_scaled', 'area_ratio',
         't_eff_s',
         'theta_arcmin', 'eef', 'psf_file', 'eef_extrapolated',
@@ -193,18 +193,21 @@ def write_results_csv(rows, out_dir, obsid):
 
 
 def _build_csv_rows(module, e_lo, e_hi, N_src, N_bkg_raw, B_scaled,
-                    area_ratio, t_eff, ul_results, eef_info, obsid):
+                    area_ratio, t_eff, ul_results, eef_info, obsid,
+                    date_obs=''):
     """
     Build a list of CSV row dicts (one per confidence level) for one module.
 
     Parameters
     ----------
     eef_info : dict or None — return value of compute_eef(), or None if skipped
+    date_obs : str          — DATE-OBS from event file header (ISO 8601)
     """
     rows = []
     for r in ul_results:
         row = {
             'obsid':              obsid,
+            'date_obs':           date_obs,
             'module':             module,
             'energy_lo_kev':      e_lo,
             'energy_hi_kev':      e_hi,
@@ -274,6 +277,7 @@ def process_module(module, src_coord, cfg):
     print(f"  Expo map    : {os.path.basename(exp_file)}")
 
     evts, evt_hdr, PI_lo, PI_hi = load_events(evt_file, e_lo, e_hi)
+    date_obs = str(evt_hdr.get('DATE-OBS', '')).strip()
     print(f"  Energy filter [{e_lo:.1f}-{e_hi:.1f} keV]  "
           f"PI=[{PI_lo},{PI_hi}]  ->  {len(evts):,} events")
 
@@ -453,7 +457,8 @@ def process_module(module, src_coord, cfg):
     # -- CSV rows -------------------------------------------------------------
     csv_rows = _build_csv_rows(
         module, e_lo, e_hi, N_src, N_bkg_raw, B_scaled,
-        area_ratio, t_eff, ul_results, eef_info, cfg.obsid)
+        area_ratio, t_eff, ul_results, eef_info, cfg.obsid,
+        date_obs=date_obs)
 
     # -- Diagnostic plots -----------------------------------------------------
     if cfg.save_plots:
@@ -469,6 +474,7 @@ def process_module(module, src_coord, cfg):
 
     return {
         'module':     module,
+        'date_obs':   date_obs,
         'N_src':      N_src,
         'N_bkg_raw':  N_bkg_raw,
         'B_scaled':   B_scaled,
@@ -585,9 +591,12 @@ def combine_modules(results_list, cfg):
         cfg.confidence_levels, eef=eef_eff)
 
     # -- Combined CSV rows ----------------------------------------------------
+    # Use date from first module's result (same observation, same date)
+    date_obs_combined = results_list[0].get('date_obs', '')
     csv_rows = _build_csv_rows(
         'AB', e_lo, e_hi, N_total, N_bkg_total, B_total,
-        area_ratio, t_comb, ul_results, eef_combined_info, cfg.obsid)
+        area_ratio, t_comb, ul_results, eef_combined_info, cfg.obsid,
+        date_obs=date_obs_combined)
 
     return csv_rows
 
