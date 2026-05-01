@@ -96,7 +96,7 @@ class SwiftConfig:
 
     # -- Observation ----------------------------------------------------------
     data_dir : str = ""
-    obsid    : str = ""
+    obsid    : Union[str, List[str]] = ""   # str or list for co-added observations
 
     # -- Source position ------------------------------------------------------
     ra  : Union[str, float] = ""
@@ -163,6 +163,13 @@ class SwiftConfig:
     # =========================================================================
     # Methods
     # =========================================================================
+
+    @property
+    def obsids(self) -> List[str]:
+        """Normalise obsid to a list of strings (always at least one element)."""
+        if isinstance(self.obsid, list):
+            return [str(o).strip() for o in self.obsid]
+        return [str(self.obsid).strip()]
 
     def resolve_energy_band(self):
         """Return (e_lo_kev, e_hi_kev)."""
@@ -239,8 +246,11 @@ class SwiftConfig:
         """Raise ValueError for obviously wrong settings."""
         if not self.data_dir:
             raise ValueError("data_dir is empty.")
-        if not self.obsid:
+        if not self.obsid or (isinstance(self.obsid, list) and len(self.obsid) == 0):
             raise ValueError("obsid is empty.")
+        for oid in self.obsids:
+            if not oid:
+                raise ValueError("One of the obsid entries is empty.")
         if not self.ra or not self.dec:
             raise ValueError("ra and dec must be set.")
         if self.bkg_mode not in ('annulus', 'manual'):

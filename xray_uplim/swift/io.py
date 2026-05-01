@@ -105,19 +105,21 @@ def _glob_first(directory, patterns, obsid):
     return None
 
 
-def locate_files(cfg):
+def locate_files(obs_root, obsid, cfg):
     """
     Locate the Swift XRT cleaned event file and exposure map.
 
-    Searches <data_dir>/xrt/event/ for event files and
-    <data_dir>/xrt/products/ for exposure maps.
+    Searches <obs_root>/xrt/event/ for event files and
+    <obs_root>/xrt/products/ for exposure maps.
 
     Mode (PC / WT) is auto-detected from what is present;
     PC is preferred (typical for faint sources / upper limits).
 
     Parameters
     ----------
-    cfg : SwiftConfig
+    obs_root : str   — observation root directory (e.g. cfg.data_dir / obsid)
+    obsid    : str   — observation ID, used for file-name glob patterns
+    cfg      : SwiftConfig
 
     Returns
     -------
@@ -125,16 +127,13 @@ def locate_files(cfg):
     exp_path : str or None   (None if exposure map not found — pipeline warns)
     mode     : str           'PC' or 'WT'
     """
-    root  = cfg.data_dir
-    obsid = cfg.obsid
-
-    evt_dir = os.path.join(root, _EVENT_SUBDIR)
-    exp_dir = os.path.join(root, _PRODUCT_SUBDIR)
+    evt_dir = os.path.join(obs_root, _EVENT_SUBDIR)
+    exp_dir = os.path.join(obs_root, _PRODUCT_SUBDIR)
 
     if not os.path.isdir(evt_dir):
-        # Fallback: user may have pointed data_dir directly at xrt/event/
-        evt_dir = root
-        exp_dir = root
+        # Fallback: obs_root already points directly at the data
+        evt_dir = obs_root
+        exp_dir = obs_root
 
     for mode in ('PC', 'WT'):
         evt_path = _glob_first(evt_dir, _EVT_GLOBS[mode], obsid)
@@ -148,9 +147,9 @@ def locate_files(cfg):
                 "Run xrtexpomap to generate it.",
                 UserWarning, stacklevel=2)
 
-        print(f"  Event file   : {os.path.relpath(evt_path, root)}")
+        print(f"  Event file   : {os.path.relpath(evt_path, obs_root)}")
         if exp_path:
-            print(f"  Exposure map : {os.path.relpath(exp_path, root)}")
+            print(f"  Exposure map : {os.path.relpath(exp_path, obs_root)}")
         print(f"  Mode         : {mode}")
         return evt_path, exp_path, mode
 

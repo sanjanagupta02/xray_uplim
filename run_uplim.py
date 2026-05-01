@@ -16,7 +16,7 @@ Or import and call from a notebook:
 # CONFIG  — edit this block
 # =============================================================================
 
-OBSERVATORY = 'nustar'    # 'nustar' | 'xmm' | 'swift'  ← set this first
+OBSERVATORY = 'swift'    # 'nustar' | 'xmm' | 'swift'  ← set this first
 
 # ---------------------------------------------------------------------------
 # NuSTAR settings  (used when OBSERVATORY = 'nustar')
@@ -103,12 +103,21 @@ XMM = dict(
 # ---------------------------------------------------------------------------
 
 SWIFT = dict(
-    data_dir          = "/Users/sanjanagupta/Documents/data/Swift/raw_data/2021bmf/03000397004",
-                        # Root of the Swift observation (contains xrt/ subdir)
-    obsid             = "03000397004",
+    data_dir          = "/Users/sanjanagupta/Documents/data/Swift/raw_data/2021bmf/",
+                        # Parent directory containing one sub-folder per obsid.
+                        # The pipeline constructs: <data_dir>/<obsid>/xrt/event/
+                        # (same convention as NuSTAR base_path / obsid.)
 
-    ra                = "05:00:13.721",   # "HH:MM:SS.ss" or decimal degrees
-    dec               = "-03:20:51.22",   # "±DD:MM:SS.ss" or decimal degrees
+    obsid             = "03000397004",
+                        # Single observation:  obsid = "03000397004"
+                        # Multiple co-added:   obsid = ["03000397001",
+                        #                               "03000397002",
+                        #                               "03000397004"]
+                        # Co-adding sums counts + exposures, then gives one
+                        # combined upper limit — ideal for short Swift exposures.
+
+    ra                = "16:33:29.416",   # "HH:MM:SS.ss" or decimal degrees
+    dec               = "-06:22:49.51",   # "±DD:MM:SS.ss" or decimal degrees
 
     src_radius_arcsec = 20.0,   # XRT on-axis FWHM ~5–6"; typical aperture 20–30"
     bkg_radius_arcsec = 80.0,   # outer radius of background annulus

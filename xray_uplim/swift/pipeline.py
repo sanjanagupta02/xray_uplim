@@ -214,53 +214,20 @@ def _evt_pixel_to_sky(cx, cy, evt_hdr):
     return ra_deg, dec_deg
 
 
-# =============================================================================
-# MAIN PIPELINE
-# =============================================================================
-
-def process_observation(cfg: SwiftConfig):
+def _load_one_obs(cfg, obs_root, obsid_str):
     """
-    Full extraction and upper-limit calculation for one Swift XRT observation.
+    Steps 1–4 for one observation: locate → load events → load expmap →
+    compute source pixel position.
 
-    Steps
-    -----
-    1.  Locate event file and exposure map (auto-detect PC / WT mode).
-    2.  Load and filter events (PI, grade).
-    3.  Load exposure map.
-    4.  Convert source RA/Dec to event-file and exposure-map pixel coords.
-    5.  (Optional) Open interactive region selector GUI.
-    6.  Extract source and background counts.
-    7.  Compute effective exposure from exposure map.
-    8.  Compute EEF from psfconst_xrt.fits (King+Gaussian PSF model).
-    9.  Print results table.
-    10. Save diagnostic plots.
-    11. Write CSV.
-
-    Parameters
-    ----------
-    cfg : SwiftConfig (validated before calling)
-
-    Returns
-    -------
-    dict with keys:
-        mode, N_src, N_bkg_raw, B_scaled, area_ratio,
-        net_counts, t_eff_s, exp_stats, ul, energy, eef_info, csv_rows
+    Returns a dict with all raw products for that observation.
     """
-    e_lo, e_hi = cfg.resolve_energy_band()
-    out_dir    = os.path.join(cfg.data_dir, "ul_products")
-    os.makedirs(out_dir, exist_ok=True)
+    # Step 1
+    evt_file, exp_file, mode = locate_files(obs_root, obsid_str, cfg)
 
-    print(f"\n{'='*70}")
-    print(f"  Swift XRT")
-    print(f"{'='*70}")
-
-    # -- Step 1: locate files -------------------------------------------------
-    evt_file, exp_file, mode = locate_files(cfg)
-
-    # -- Step 2: load events --------------------------------------------------
+    # Step 2
     events, evt_hdr, pi_lo, pi_hi = load_events(cfg, evt_file, mode)
 
-    # -- Step 3: load exposure map --------------------------------------------
+    # Step 3
     if exp_file is not None:
         exp_data, exp_hdr = load_expmap(exp_file)
     else:
@@ -270,9 +237,8 @@ def process_observation(cfg: SwiftConfig):
             "from the event file ONTIME header keyword.",
             UserWarning, stacklevel=2)
 
-    # -- Step 4: source pixel position ----------------------------------------
+    # Step 4
     src_coord = parse_coord(cfg.ra, cfg.dec)
-
     cx_evt, cy_evt, pscale_evt = sky_to_evt_pixel(
         src_coord.ra.deg, src_coord.dec.deg, evt_hdr)
 
@@ -287,62 +253,86 @@ def process_observation(cfg: SwiftConfig):
     x_ok = evt_x.min() <= cx_evt <= evt_x.max()
     y_ok = evt_y.min() <= cy_evt <= evt_y.max()
     if not (x_ok and y_ok):
-        print(f"  !! WARNING: source pixel is OUTSIDE the event X/Y range — "
-              f"check your coordinates!")
+        print("  !! WARNING: source pixel is OUTSIDE the event X/Y range — "
+              "check your coordinates!")
     else:
-        print(f"  Source position is inside the event image. Good.")
+        print("  Source position is inside the event image. Good.")
 
-    # -- Step 5: interactive region selector (optional) -----------------------
-    label      = f"XRT-{mode}"
-    bkg_cx_evt = cx_evt
-    bkg_cy_evt = cy_evt
+    return dict(
+        mode=mode, events=events, evt_hdr=evt_hdr,
+        evt_x=evt_x, evt_y=evt_y,
+        cx_evt=cx_evt, cy_evt=cy_evt, pscale_evt=pscale_evt,
+        exp_data=exp_data, exp_hdr=exp_hdr,
+        pi_lo=pi_lo, pi_hi=pi_hi,
+        src_coord=src_coord,
+    )
 
-    if cfg.use_gui:
-        from ..region_selector import select_regions_interactive
-        print(f"\n  Opening interactive region selector for {label}...")
-        sel = select_regions_interactive(
-            evt_x, evt_y, cx_evt, cy_evt, pscale_evt, cfg, label)
 
-        cx_evt     = sel['cx']
-        cy_evt     = sel['cy']
-        bkg_cx_evt = sel['bkg_cx']
-        bkg_cy_evt = sel['bkg_cy']
+def _run_gui_first_obs(cfg, obs):
+    """
+    Run the interactive region selector for the FIRST observation.
 
-        cfg.src_radius_arcsec = sel['src_radius_arcsec']
-        cfg.bkg_radius_arcsec = sel['bkg_radius_arcsec']
-        cfg.bkg_inner_factor  = sel['bkg_inner_factor']
+    Mutates cfg with the user's chosen aperture and background settings.
+    Returns (bkg_cx_evt, bkg_cy_evt) in event-file pixels for this obs,
+    and stores sky-coordinate background position in cfg so later obs
+    can re-project it themselves.
+    """
+    label      = f"XRT-{obs['mode']}"
+    bkg_cx_evt = obs['cx_evt']
+    bkg_cy_evt = obs['cy_evt']
 
-        bkg_moved = (abs(bkg_cx_evt - cx_evt) > 1.0 or
-                     abs(bkg_cy_evt - cy_evt) > 1.0)
-        if bkg_moved:
-            try:
-                bkg_ra, bkg_dec = _evt_pixel_to_sky(bkg_cx_evt, bkg_cy_evt,
-                                                     evt_hdr)
-                cfg.bkg_mode = 'manual'
-                cfg.bkg_ra   = str(float(bkg_ra))
-                cfg.bkg_dec  = str(float(bkg_dec))
-                print(f"  [GUI] Background → manual mode: "
-                      f"RA={bkg_ra:.5f}  Dec={bkg_dec:.5f}")
-            except Exception as exc:
-                warnings.warn(
-                    f"Could not convert background pixel to RA/Dec ({exc}). "
-                    "Falling back to annulus mode.",
-                    RuntimeWarning, stacklevel=2)
-                cfg.bkg_mode = 'annulus'
-                bkg_cx_evt   = cx_evt
-                bkg_cy_evt   = cy_evt
+    from ..region_selector import select_regions_interactive
+    print(f"\n  Opening interactive region selector for {label}...")
+    sel = select_regions_interactive(
+        obs['evt_x'], obs['evt_y'],
+        obs['cx_evt'], obs['cy_evt'], obs['pscale_evt'],
+        cfg, label)
 
-    print(f"\n  Src aperture : {cfg.src_radius_arcsec:.1f}\"")
-    if cfg.bkg_mode == 'annulus':
-        r_in = cfg.src_radius_arcsec * cfg.bkg_inner_factor
-        print(f"  Bkg annulus  : {r_in:.1f}\" — {cfg.bkg_radius_arcsec:.1f}\"")
-    else:
-        print(f"  Bkg circle   : r={cfg.bkg_radius_arcsec:.1f}\"  (manual centre)")
+    bkg_cx_evt = sel['bkg_cx']
+    bkg_cy_evt = sel['bkg_cy']
 
-    # -- Step 6: source and background counts ---------------------------------
-    print()
-    N_src, N_bkg_raw, area_ratio, cx_evt, cy_evt, pscale_evt = \
-        extract_src_bkg_counts(events, evt_hdr, cfg, mode,
+    cfg.src_radius_arcsec = sel['src_radius_arcsec']
+    cfg.bkg_radius_arcsec = sel['bkg_radius_arcsec']
+    cfg.bkg_inner_factor  = sel['bkg_inner_factor']
+
+    bkg_moved = (abs(bkg_cx_evt - obs['cx_evt']) > 1.0 or
+                 abs(bkg_cy_evt - obs['cy_evt']) > 1.0)
+    if bkg_moved:
+        try:
+            bkg_ra, bkg_dec = _evt_pixel_to_sky(bkg_cx_evt, bkg_cy_evt,
+                                                  obs['evt_hdr'])
+            cfg.bkg_mode = 'manual'
+            cfg.bkg_ra   = str(float(bkg_ra))
+            cfg.bkg_dec  = str(float(bkg_dec))
+            print(f"  [GUI] Background → manual mode: "
+                  f"RA={bkg_ra:.5f}  Dec={bkg_dec:.5f}")
+        except Exception as exc:
+            warnings.warn(
+                f"Could not convert background pixel to RA/Dec ({exc}). "
+                "Falling back to annulus mode.",
+                RuntimeWarning, stacklevel=2)
+            cfg.bkg_mode = 'annulus'
+            bkg_cx_evt   = obs['cx_evt']
+            bkg_cy_evt   = obs['cy_evt']
+
+    return bkg_cx_evt, bkg_cy_evt
+
+
+def _extract_counts_exposure_eef(cfg, obs, bkg_cx_evt, bkg_cy_evt, e_lo, e_hi):
+    """
+    Steps 6–8: extract counts, effective exposure, and EEF for one observation.
+
+    For subsequent (non-GUI) observations, bkg_cx_evt / bkg_cy_evt should be
+    None so that extract_src_bkg_counts re-projects cfg.bkg_ra / bkg_dec.
+
+    Returns a dict with all per-obs quantities needed for accumulation.
+    """
+    mode = obs['mode']
+    label = f"XRT-{mode}"
+
+    # Step 6
+    N_src, N_bkg_raw, area_ratio, cx_out, cy_out, pscale_out = \
+        extract_src_bkg_counts(obs['events'], obs['evt_hdr'], cfg, mode,
                                bkg_cx_evt=bkg_cx_evt, bkg_cy_evt=bkg_cy_evt)
     B_scaled = N_bkg_raw * area_ratio
 
@@ -350,24 +340,22 @@ def process_observation(cfg: SwiftConfig):
     print(f"  Scaled bkg   B           : {B_scaled:.3f} cts")
     print(f"  Net counts   (N_src - B) : {N_src - B_scaled:.3f} cts")
 
-    # -- Step 7: effective exposure -------------------------------------------
+    # Step 7
     print()
-    if exp_data is not None:
+    if obs['exp_data'] is not None:
         exp_stats, exp_meta, cx_exp, cy_exp = extract_exposure(
-            exp_data, exp_hdr, cfg)
-
+            obs['exp_data'], obs['exp_hdr'], cfg)
         print(f"\n  -- Exposure statistics ------------------------------------------")
         for key, lbl in [('median',       'Median        [RECOMMENDED]        '),
                          ('mean',         'Mean          [diagnostic]         '),
                          ('psf_weighted', 'PSF-wtd mean  [on-axis diag. only] ')]:
             tag = ' <-- PRIMARY' if key == cfg.exp_stat else ''
             print(f"    {lbl} : {exp_stats[key]/1e3:7.3f} ks{tag}")
-
         t_eff = exp_stats[cfg.exp_stat]
     else:
-        # Fallback: ONTIME from event file header
-        ontime = float(evt_hdr.get('ONTIME', evt_hdr.get('EXPOSURE', 0.0)))
-        t_eff  = ontime
+        ontime = float(obs['evt_hdr'].get('ONTIME',
+                       obs['evt_hdr'].get('EXPOSURE', 0.0)))
+        t_eff = ontime
         exp_stats = {'median': ontime, 'mean': ontime, 'psf_weighted': ontime}
         exp_meta  = None
         cx_exp = cy_exp = None
@@ -378,12 +366,11 @@ def process_observation(cfg: SwiftConfig):
 
     print(f"\n  Using t_eff = {t_eff/1e3:.3f} ks  ({cfg.exp_stat})")
 
-    # -- Step 8: EEF from psfconst_xrt.fits ----------------------------------
+    # Step 8
     eef_info = None
     try:
         eef_info = compute_swift_eef(
-            cfg, evt_hdr, cfg.src_radius_arcsec, e_lo, e_hi)
-
+            cfg, obs['evt_hdr'], cfg.src_radius_arcsec, e_lo, e_hi)
         print(f"\n  -- EEF (Encircled Energy Fraction) ----------------------------")
         print(f"    Off-axis angle   : {eef_info['theta_arcmin']:.3f} arcmin")
         print(f"    Pointing         : RA={eef_info['pointing_ra']:.5f}  "
@@ -394,7 +381,6 @@ def process_observation(cfg: SwiftConfig):
         if eef_info['extrapolated']:
             print(f"    !! Off-axis angle exceeds XRT FOV ({eef_info['theta_arcmin']:.1f}'). "
                   f"EEF capped at 12' = {eef_info['eef_capped']:.4f}")
-
     except (RuntimeError, FileNotFoundError, KeyError) as exc:
         warnings.warn(
             f"EEF computation skipped: {exc}\n"
@@ -402,36 +388,217 @@ def process_observation(cfg: SwiftConfig):
             "caldb_dir= to enable EEF-corrected upper limits.",
             UserWarning, stacklevel=2)
 
-    # -- Step 9: results table ------------------------------------------------
+    return dict(
+        N_src=N_src, N_bkg_raw=N_bkg_raw, area_ratio=area_ratio,
+        B_scaled=B_scaled, t_eff=t_eff,
+        exp_stats=exp_stats, exp_meta=exp_meta,
+        cx_evt=cx_out, cy_evt=cy_out, pscale_evt=pscale_out,
+        cx_exp=cx_exp, cy_exp=cy_exp,
+        eef_info=eef_info,
+        mode=mode,
+        bkg_cx_evt=bkg_cx_evt if bkg_cx_evt is not None else cx_out,
+        bkg_cy_evt=bkg_cy_evt if bkg_cy_evt is not None else cy_out,
+    )
+
+
+# =============================================================================
+# MAIN PIPELINE
+# =============================================================================
+
+def process_observation(cfg: SwiftConfig):
+    """
+    Full extraction and upper-limit calculation for one Swift XRT observation,
+    or for multiple co-added observations when cfg.obsid is a list.
+
+    For multiple obsids:
+    - The interactive region selector (GUI) is shown for the FIRST observation
+      only; the chosen aperture sizes and background position are then applied
+      to all subsequent observations.
+    - Counts and effective exposures are summed across observations.
+    - The EEF is averaged weighted by effective exposure time (to account for
+      slightly different off-axis angles between pointings).
+    - A single combined upper limit is computed at the end.
+
+    Steps per observation
+    ---------------------
+    1.  Locate event file and exposure map (auto-detect PC / WT mode).
+    2.  Load and filter events (PI, grade).
+    3.  Load exposure map.
+    4.  Convert source RA/Dec to event-file pixel coords.
+    5.  (First obs only, optional) Open interactive region selector GUI.
+    6.  Extract source and background counts.
+    7.  Compute effective exposure from exposure map (or ONTIME fallback).
+    8.  Compute EEF from psfconst_xrt.fits.
+
+    Then (once, on accumulated totals):
+    9.  Print combined results table.
+    10. Save diagnostic plots (per observation).
+    11. Write combined CSV.
+
+    Parameters
+    ----------
+    cfg : SwiftConfig (validated before calling)
+
+    Returns
+    -------
+    dict with keys:
+        obsids, mode, N_src, N_bkg_raw, B_scaled, area_ratio,
+        net_counts, t_eff_s, exp_stats, ul, energy, eef_info, csv_rows
+    """
+    e_lo, e_hi = cfg.resolve_energy_band()
+    out_dir    = os.path.join(cfg.data_dir, "ul_products")
+    os.makedirs(out_dir, exist_ok=True)
+
+    obsids = cfg.obsids
+    n_obs  = len(obsids)
+
+    # ------------------------------------------------------------------ #
+    # Loop over observations                                               #
+    # ------------------------------------------------------------------ #
+    per_obs = []
+    bkg_cx_first = bkg_cy_first = None   # pixel coords from GUI (first obs)
+
+    for i, obsid_str in enumerate(obsids):
+        obs_root = os.path.join(cfg.data_dir, obsid_str)
+
+        print(f"\n{'='*70}")
+        if n_obs > 1:
+            print(f"  Swift XRT  —  Observation {i+1}/{n_obs}  ({obsid_str})")
+        else:
+            print(f"  Swift XRT")
+        print(f"{'='*70}")
+
+        obs = _load_one_obs(cfg, obs_root, obsid_str)
+
+        # GUI only for the first observation
+        if i == 0:
+            bkg_cx_evt = obs['cx_evt']
+            bkg_cy_evt = obs['cy_evt']
+
+            if cfg.use_gui:
+                bkg_cx_evt, bkg_cy_evt = _run_gui_first_obs(cfg, obs)
+
+            bkg_cx_first = bkg_cx_evt
+            bkg_cy_first = bkg_cy_evt
+
+            # Print aperture summary (once, after possible GUI)
+            print(f"\n  Src aperture : {cfg.src_radius_arcsec:.1f}\"")
+            if cfg.bkg_mode == 'annulus':
+                r_in = cfg.src_radius_arcsec * cfg.bkg_inner_factor
+                print(f"  Bkg annulus  : {r_in:.1f}\" — {cfg.bkg_radius_arcsec:.1f}\"")
+            else:
+                print(f"  Bkg circle   : r={cfg.bkg_radius_arcsec:.1f}\"  "
+                      f"(manual centre  RA={cfg.bkg_ra}  Dec={cfg.bkg_dec})")
+        else:
+            # For subsequent obs: bkg_mode / bkg_ra / bkg_dec were already
+            # set by GUI (or were in cfg already).  Pass None so that
+            # extract_src_bkg_counts re-projects sky coords to this obs's WCS.
+            bkg_cx_evt = None
+            bkg_cy_evt = None
+
+        print()
+        raw = _extract_counts_exposure_eef(
+            cfg, obs, bkg_cx_evt, bkg_cy_evt, e_lo, e_hi)
+        raw['obs_root']   = obs_root
+        raw['obsid_str']  = obsid_str
+        raw['evt_x']      = obs['evt_x']
+        raw['evt_y']      = obs['evt_y']
+        raw['src_coord']  = obs['src_coord']
+        # Keep GUI bkg pixel only for first obs (used in plots)
+        raw['bkg_cx_for_plot'] = (bkg_cx_first if i == 0
+                                   else raw['bkg_cx_evt'])
+        raw['bkg_cy_for_plot'] = (bkg_cy_first if i == 0
+                                   else raw['bkg_cy_evt'])
+        per_obs.append(raw)
+
+    # ------------------------------------------------------------------ #
+    # Accumulate across observations                                        #
+    # ------------------------------------------------------------------ #
+    N_src_total     = sum(r['N_src']     for r in per_obs)
+    N_bkg_raw_total = sum(r['N_bkg_raw'] for r in per_obs)
+    T_eff_total     = sum(r['t_eff']     for r in per_obs)
+    area_ratio      = per_obs[0]['area_ratio']   # geometric — same for all
+    B_scaled_total  = N_bkg_raw_total * area_ratio
+
+    # Exposure-weighted EEF average
+    eef_infos = [r['eef_info'] for r in per_obs]
+    if all(e is not None for e in eef_infos):
+        eef_avg = (sum(r['t_eff'] * r['eef_info']['eef'] for r in per_obs)
+                   / T_eff_total)
+        # Build a representative eef_info with the averaged EEF
+        eef_info = dict(per_obs[0]['eef_info'])
+        eef_info['eef'] = eef_avg
+        if n_obs > 1:
+            print(f"\n  EEF averaged across {n_obs} observations "
+                  f"(exposure-weighted): {eef_avg:.4f}")
+    else:
+        eef_info = None
+
+    # Composite exp_stats (sum of primary stat; individual medians/means not merged)
+    exp_stats_total = {
+        'median'      : sum(r['exp_stats']['median']       for r in per_obs),
+        'mean'        : sum(r['exp_stats']['mean']         for r in per_obs),
+        'psf_weighted': sum(r['exp_stats']['psf_weighted'] for r in per_obs),
+    }
+
+    mode = per_obs[0]['mode']   # should be the same for all (same obsid family)
+
+    if n_obs > 1:
+        print(f"\n{'='*70}")
+        print(f"  Combined totals across {n_obs} observations")
+        print(f"{'='*70}")
+        print(f"  N_src total      : {N_src_total}")
+        print(f"  N_bkg_raw total  : {N_bkg_raw_total}")
+        print(f"  B_scaled total   : {B_scaled_total:.3f} cts")
+        print(f"  T_eff total      : {T_eff_total/1e3:.3f} ks")
+
+    # ------------------------------------------------------------------ #
+    # Step 9: results table on combined counts                             #
+    # ------------------------------------------------------------------ #
     eef_val    = eef_info['eef'] if eef_info is not None else None
     ul_results = _print_results_table(
-        N_src, B_scaled, t_eff, N_bkg_raw, area_ratio,
+        N_src_total, B_scaled_total, T_eff_total,
+        N_bkg_raw_total, area_ratio,
         cfg.confidence_levels, eef=eef_val)
 
-    # -- Step 10: diagnostic plots --------------------------------------------
+    # ------------------------------------------------------------------ #
+    # Step 10: diagnostic plots  (one set per observation)                  #
+    # ------------------------------------------------------------------ #
     if cfg.save_plots:
-        _save_plots(evt_x, evt_y, cx_evt, cy_evt, pscale_evt,
-                    exp_meta, exp_stats, label, e_lo, e_hi, cfg, out_dir,
-                    src_coord, bkg_cx_evt, bkg_cy_evt)
+        for r in per_obs:
+            _save_plots(
+                r['evt_x'], r['evt_y'], r['cx_evt'], r['cy_evt'], r['pscale_evt'],
+                r['exp_meta'], r['exp_stats'],
+                f"XRT-{r['mode']}", e_lo, e_hi, cfg, out_dir,
+                r['src_coord'],
+                bkg_cx_evt=r['bkg_cx_for_plot'],
+                bkg_cy_evt=r['bkg_cy_for_plot'],
+                obsid_str=r['obsid_str'])
 
-    # -- Step 11: CSV ---------------------------------------------------------
+    # ------------------------------------------------------------------ #
+    # Step 11: CSV (combined result)                                        #
+    # ------------------------------------------------------------------ #
+    obsid_label = (obsids[0] if n_obs == 1
+                   else "+".join(obsids))
     csv_rows = _build_csv_rows(
-        mode, e_lo, e_hi, N_src, N_bkg_raw, B_scaled,
-        area_ratio, t_eff, ul_results, eef_info, cfg.obsid)
+        mode, e_lo, e_hi,
+        N_src_total, N_bkg_raw_total, B_scaled_total,
+        area_ratio, T_eff_total, ul_results, eef_info, obsid_label)
 
     return {
-        'mode':       mode,
-        'N_src':      N_src,
-        'N_bkg_raw':  N_bkg_raw,
-        'B_scaled':   B_scaled,
-        'area_ratio': area_ratio,
-        'net_counts': N_src - B_scaled,
-        't_eff_s':    t_eff,
-        'exp_stats':  exp_stats,
-        'ul':         ul_results,
-        'energy':     (e_lo, e_hi),
-        'eef_info':   eef_info,
-        'csv_rows':   csv_rows,
+        'obsids'     : obsids,
+        'mode'       : mode,
+        'N_src'      : N_src_total,
+        'N_bkg_raw'  : N_bkg_raw_total,
+        'B_scaled'   : B_scaled_total,
+        'area_ratio' : area_ratio,
+        'net_counts' : N_src_total - B_scaled_total,
+        't_eff_s'    : T_eff_total,
+        'exp_stats'  : exp_stats_total,
+        'ul'         : ul_results,
+        'energy'     : (e_lo, e_hi),
+        'eef_info'   : eef_info,
+        'csv_rows'   : csv_rows,
     }
 
 
@@ -441,7 +608,7 @@ def process_observation(cfg: SwiftConfig):
 
 def _save_plots(evt_x, evt_y, cx_evt, cy_evt, pscale_evt,
                 exp_meta, exp_stats, label, e_lo, e_hi, cfg, out_dir,
-                src_coord, bkg_cx_evt, bkg_cy_evt):
+                src_coord, bkg_cx_evt, bkg_cy_evt, obsid_str=None):
     try:
         from ..plots import radial_profile, exposure_histogram, region_image
     except ImportError:
@@ -449,16 +616,20 @@ def _save_plots(evt_x, evt_y, cx_evt, cy_evt, pscale_evt,
                       RuntimeWarning, stacklevel=2)
         return
 
+    # Use the per-observation obsid for file naming (avoids collisions when
+    # multiple obsids are co-added)
+    plot_obsid = obsid_str if obsid_str is not None else cfg.obsids[0]
+
     radial_profile(
         evt_x, evt_y, cx_evt, cy_evt, pscale_evt,
-        label, e_lo, e_hi, cfg.obsid, cfg, out_dir)
+        label, e_lo, e_hi, plot_obsid, cfg, out_dir)
 
     if exp_meta is not None:
         exposure_histogram(exp_meta, exp_stats, label, cfg, out_dir)
 
     region_image(
         evt_x, evt_y, cx_evt, cy_evt, pscale_evt,
-        label, e_lo, e_hi, cfg.obsid, cfg, out_dir,
+        label, e_lo, e_hi, plot_obsid, cfg, out_dir,
         src_ra_deg  = src_coord.ra.deg,
         src_dec_deg = src_coord.dec.deg,
         bkg_cx_evt  = bkg_cx_evt,
@@ -475,10 +646,23 @@ def run_uplim(data_dir, obsid, ra, dec, **kwargs):
 
     Parameters
     ----------
-    data_dir : str           — observation root directory (contains xrt/)
-    obsid    : str           — Swift observation ID (e.g. '03000397004')
-    ra       : str or float  — source RA  ("HH:MM:SS" or decimal degrees)
-    dec      : str or float  — source Dec ("±DD:MM:SS" or decimal degrees)
+    data_dir : str or path
+        Parent directory that contains one sub-directory per observation,
+        named by obsid (e.g. '/path/to/swift/data/' which contains
+        '03000397004/', '03000397005/', …).
+        Each obsid sub-directory must contain the standard Swift archive
+        layout (xrt/event/ and xrt/products/).
+
+    obsid : str or list of str
+        One observation ID, or a list of IDs to co-add.
+        When a list is supplied, counts and exposures from all observations
+        are summed before computing the upper limit — equivalent to a
+        stacked analysis with no time-resolved information.
+        Example: obsid='03000397004'
+                 obsid=['03000397001', '03000397002', '03000397004']
+
+    ra  : str or float  — source RA  ("HH:MM:SS" or decimal degrees)
+    dec : str or float  — source Dec ("±DD:MM:SS" or decimal degrees)
     **kwargs : any SwiftConfig field, e.g.
                    energy_band='soft',
                    src_radius_arcsec=20.0,
@@ -496,6 +680,7 @@ def run_uplim(data_dir, obsid, ra, dec, **kwargs):
     e_lo, e_hi = cfg.resolve_energy_band()
     src_coord  = parse_coord(cfg.ra, cfg.dec)
     out_dir    = os.path.join(cfg.data_dir, "ul_products")
+    obsids     = cfg.obsids
 
     print("Swift XRT Non-Detection Upper Limit")
     print("=" * 70)
@@ -509,7 +694,13 @@ def run_uplim(data_dir, obsid, ra, dec, **kwargs):
     print(f"Exp stat    :  {cfg.exp_stat}  (primary)")
     print(f"Bkg mode    :  {cfg.bkg_mode}")
     print(f"Data dir    :  {cfg.data_dir}")
-    print(f"Obs ID      :  {cfg.obsid}")
+    if len(obsids) == 1:
+        print(f"Obs ID      :  {obsids[0]}")
+    else:
+        print(f"Obs IDs     :  {len(obsids)} observations  "
+              f"[{obsids[0]} … {obsids[-1]}]")
+        for oid in obsids:
+            print(f"               {oid}")
     if cfg.caldb_dir:
         print(f"CALDB       :  {cfg.caldb_dir}")
     else:
@@ -530,11 +721,15 @@ def run_uplim(data_dir, obsid, ra, dec, **kwargs):
                if result['eef_info'] is not None else "  N/A")
     ul_row = next((u for u in result['ul'] if u['cl'] >= 0.997),
                   result['ul'][-1])
-    print(f"  {'Mode':<8}  {'N_src':>6}  {'B_scaled':>9}  "
+
+    n_obs = len(obsids)
+    obs_label = obsids[0] if n_obs == 1 else f"{n_obs} obs co-added"
+
+    print(f"  {'Obs':>20}  {'Mode':<5}  {'N_src':>6}  {'B_scaled':>9}  "
           f"{'t_eff (ks)':>11}  {'EEF':>6}  "
           f"{'Kraft CR_ap (3σ)':>18}")
-    print("  " + "-" * 68)
-    print(f"  {result['mode']:<8}  {result['N_src']:>6}  "
+    print("  " + "-" * 84)
+    print(f"  {obs_label:>20}  {result['mode']:<5}  {result['N_src']:>6}  "
           f"{result['B_scaled']:>9.2f}  "
           f"{result['t_eff_s']/1e3:>11.3f}  "
           f"{eef_str:>6}  "
@@ -542,6 +737,7 @@ def run_uplim(data_dir, obsid, ra, dec, **kwargs):
     print()
 
     # -- Write CSV ------------------------------------------------------------
-    write_results_csv(result['csv_rows'], out_dir, cfg.obsid)
+    obsid_label = obsids[0] if n_obs == 1 else "+".join(obsids)
+    write_results_csv(result['csv_rows'], out_dir, obsid_label)
 
     return result
