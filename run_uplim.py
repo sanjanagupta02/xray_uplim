@@ -72,7 +72,8 @@ NUSTAR = dict(
 
 XMM = dict(
     data_dir          = "/Users/sanjanagupta/Documents/data/XMM/2012ap_/ODF",             # ODF working directory (epproc/emproc output)
-    obsid             = "0881990901",             # e.g. '0881990901'
+    obsid             = "0881990901",
+                        # or: obsid = ["0881990901", "0881990902"]
 
     ra                = "05:00:13.721",             # "HH:MM:SS.ss" or decimal degrees
     dec               = "-03:20:51.22",             # "±DD:MM:SS.ss" or decimal degrees
@@ -103,6 +104,11 @@ XMM = dict(
                                 # download: https://www.cosmos.esa.int/web/xmm-newton/current-calibration-files
 
     use_gui           = True,
+    gui_per_obs       = False,  # True: independent GUI for EACH observation —
+                                #   use if pointings differ or source falls
+                                #   at the edge / off-chip in some obs.
+                                # False (default): GUI for first obs only,
+                                #   regions carried to all subsequent obs.
     save_plots        = True,
 )
 

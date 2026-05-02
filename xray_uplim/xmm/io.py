@@ -19,7 +19,7 @@ scheduled (_S_) exposures are preferred over unscheduled (_U_).
 
 Public API
 ----------
-locate_files(cfg, instrument)   → (evt_path, exp_path)
+locate_files(data_dir, obsid_str, instrument, cfg)   → (evt_path, exp_path)
 load_events(cfg, evt_path, instrument)
     → (events_table, header, pi_lo, pi_hi)
 load_expmap(exp_path)           → (exp_array, exp_header)
@@ -69,7 +69,7 @@ def _glob_first(pattern, label):
 # File discovery
 # ---------------------------------------------------------------------------
 
-def locate_files(cfg: XMMConfig, instrument: str):
+def locate_files(data_dir: str, obsid_str: str, instrument: str, cfg: XMMConfig):
     """
     Locate the cleaned event file and exposure map for one EPIC instrument.
 
@@ -82,22 +82,23 @@ def locate_files(cfg: XMMConfig, instrument: str):
 
     Parameters
     ----------
-    cfg        : XMMConfig
+    data_dir   : str   — directory to search in (obs-specific for multi-obsid)
+    obsid_str  : str   — single obsid string for file globbing
     instrument : 'MOS1', 'MOS2', or 'PN'
+    cfg        : XMMConfig
 
     Returns
     -------
     evt_path : str   — absolute path to cleaned event file
     exp_path : str   — absolute path to exposure map
     """
-    data_dir = cfg.data_dir
     instrume_key = cfg.INSTRUME_KEYS[instrument]   # 'EMOS1', 'EMOS2', 'EPN'
 
     # -- Event file -----------------------------------------------------------
     # Try obsid-scoped pattern first, then fall back to broader pattern
-    if cfg.obsid:
+    if obsid_str:
         evt_pattern_narrow = os.path.join(
-            data_dir, f'*{cfg.obsid}*{instrume_key}*ImagingEvts.ds')
+            data_dir, f'*{obsid_str}*{instrume_key}*ImagingEvts.ds')
         matches = glob.glob(evt_pattern_narrow)
     else:
         matches = []

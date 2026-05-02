@@ -54,9 +54,10 @@ class XMMConfig:
         Directory containing SAS-processed event files and exposure maps
         (typically the ODF working directory where you ran epproc/emproc
         and eexpmap).
-    obsid : str
-        XMM observation ID (e.g. '0881990901').  Used for file globbing
-        and output naming.
+    obsid : str or list of str
+        XMM obs ID (e.g. '0881990901'), or list for co-adding.
+        Single obs: data_dir is the working dir.
+        Multiple obs: data_dir is parent, each obs in data_dir/<obsid>/.
     ra : str or float
         Source right ascension.  Accepts "HH:MM:SS.ss" or decimal degrees.
     dec : str or float
@@ -96,13 +97,17 @@ class XMMConfig:
         https://www.cosmos.esa.int/web/xmm-newton/current-calibration-files
     use_gui : bool
         Open interactive region selector before each instrument.
+    gui_per_obs : bool
+        When use_gui=True and multiple obsids are given, open a separate
+        interactive GUI for each observation (True) or only for the first
+        observation and carry the aperture settings to all others (False).
     save_plots : bool
         Save diagnostic plots to <data_dir>/ul_products/.
     """
 
     # -- Observation ----------------------------------------------------------
     data_dir : str = ""
-    obsid    : str = ""
+    obsid    : Union[str, List[str]] = ""
 
     # -- Source position ------------------------------------------------------
     ra  : Union[str, float] = ""
@@ -138,8 +143,9 @@ class XMMConfig:
     psf_dir : str = ""
 
     # -- Output ---------------------------------------------------------------
-    use_gui    : bool = False
-    save_plots : bool = True
+    use_gui     : bool = False
+    gui_per_obs : bool = False
+    save_plots  : bool = True
 
     # =========================================================================
     # Instrument constants — do not edit
@@ -188,6 +194,12 @@ class XMMConfig:
     # =========================================================================
     # Methods
     # =========================================================================
+
+    @property
+    def obsids(self) -> List[str]:
+        if isinstance(self.obsid, list):
+            return [str(o).strip() for o in self.obsid]
+        return [str(self.obsid).strip()]
 
     def resolve_energy_band(self):
         """Return (e_lo_kev, e_hi_kev)."""
@@ -277,7 +289,7 @@ class XMMConfig:
         """Raise ValueError for obviously wrong settings."""
         if not self.data_dir:
             raise ValueError("data_dir is empty.")
-        if not self.obsid:
+        if not self.obsid or (isinstance(self.obsid, list) and len(self.obsid) == 0):
             raise ValueError("obsid is empty.")
         if not self.ra or not self.dec:
             raise ValueError("ra and dec must be set.")

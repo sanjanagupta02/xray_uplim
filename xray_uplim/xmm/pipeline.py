@@ -7,13 +7,19 @@ Each instrument (MOS1, MOS2, PN) is processed independently.  Results are
 never combined across instruments — PN and MOS have different effective areas,
 response matrices, and PSF shapes.
 
+Multi-obsid co-adding sums counts and exposures across observations for each
+instrument independently, yielding a single combined upper limit per instrument.
+
 Public API
 ----------
-run_uplim(**kwargs)               — entry point; builds XMMConfig and loops
+run_uplim(**kwargs)               — entry point; builds XMMConfig and calls
+                                    process_observations
+process_observations(cfg)         — main pipeline; handles single and multi-obs
 process_instrument(instrument, cfg)
-                                  — full pipeline for one EPIC instrument
+                                  — thin wrapper for single-obsid backward compat
 """
 
+import copy
 import csv
 import os
 import warnings
@@ -25,6 +31,53 @@ from .aperture import extract_src_bkg_counts, extract_exposure
 from .eef      import compute_xmm_eef
 from ..coords  import parse_coord
 from ..statistics import net_count_rate, kraft_upper_limit, gehrels_upper_limit
+
+
+# =============================================================================
+# PURE COMPUTATION — no printing
+# =============================================================================
+
+def _compute_ul_results(N_src, B_scaled, t_eff, N_bkg_raw, area_ratio,
+                         confidence_levels, eef=None):
+    """
+    Compute upper limits at every confidence level.
+
+    Parameters
+    ----------
+    N_src, B_scaled, t_eff, N_bkg_raw, area_ratio : as usual
+    confidence_levels : list of float
+    eef : float or None
+
+    Returns
+    -------
+    list of dicts with keys:
+        cl, CR_net, CR_sigma, S_kraft, CR_kraft_aperture, CR_kraft_total,
+        S_gehrels, CR_gehrels_aperture, CR_gehrels_total
+    """
+    CR_net, CR_sigma = net_count_rate(N_src, B_scaled, t_eff,
+                                       N_bkg_raw, area_ratio)
+    results = []
+    for cl in confidence_levels:
+        S_k  = kraft_upper_limit(N_src, B_scaled, cl)
+        S_g  = gehrels_upper_limit(N_src, B_scaled, cl)
+        CR_k_ap = S_k / t_eff
+        CR_g_ap = S_g / t_eff
+
+        CR_k_tot = S_k / (t_eff * eef) if (eef is not None and eef > 0) else None
+        CR_g_tot = S_g / (t_eff * eef) if (eef is not None and eef > 0) else None
+
+        results.append({
+            'cl':                  cl,
+            'CR_net':              CR_net,
+            'CR_sigma':            CR_sigma,
+            'S_kraft':             S_k,
+            'CR_kraft_aperture':   CR_k_ap,
+            'CR_kraft_total':      CR_k_tot,
+            'S_gehrels':           S_g,
+            'CR_gehrels_aperture': CR_g_ap,
+            'CR_gehrels_total':    CR_g_tot,
+        })
+    return results
 
 
 # =============================================================================
@@ -54,8 +107,11 @@ def _print_results_table(N_src, B_scaled, t_eff, N_bkg_raw, area_ratio,
     -------
     list of dicts — one per confidence level
     """
-    CR_net, CR_sigma = net_count_rate(N_src, B_scaled, t_eff,
-                                       N_bkg_raw, area_ratio)
+    results = _compute_ul_results(N_src, B_scaled, t_eff, N_bkg_raw, area_ratio,
+                                   confidence_levels, eef=eef)
+
+    CR_net   = results[0]['CR_net']   if results else 0.0
+    CR_sigma = results[0]['CR_sigma'] if results else 0.0
 
     print(f"\n  Point estimate  (N_src - B) / t_eff  [NOT an upper limit]")
     print(f"    = ({N_src} - {B_scaled:.1f}) / {t_eff:.1f} s")
@@ -81,27 +137,14 @@ def _print_results_table(N_src, B_scaled, t_eff, N_bkg_raw, area_ratio,
     print(header)
     print(divider)
 
-    results = []
-    for cl in confidence_levels:
-        S_k  = kraft_upper_limit(N_src, B_scaled, cl)
-        S_g  = gehrels_upper_limit(N_src, B_scaled, cl)
-        CR_k_ap = S_k / t_eff
-        CR_g_ap = S_g / t_eff
-
-        CR_k_tot = S_k / (t_eff * eef) if (eef is not None and eef > 0) else None
-        CR_g_tot = S_g / (t_eff * eef) if (eef is not None and eef > 0) else None
-
-        results.append({
-            'cl':                  cl,
-            'CR_net':              CR_net,
-            'CR_sigma':            CR_sigma,
-            'S_kraft':             S_k,
-            'CR_kraft_aperture':   CR_k_ap,
-            'CR_kraft_total':      CR_k_tot,
-            'S_gehrels':           S_g,
-            'CR_gehrels_aperture': CR_g_ap,
-            'CR_gehrels_total':    CR_g_tot,
-        })
+    for r in results:
+        cl       = r['cl']
+        CR_k_ap  = r['CR_kraft_aperture']
+        CR_g_ap  = r['CR_gehrels_aperture']
+        CR_k_tot = r['CR_kraft_total']
+        CR_g_tot = r['CR_gehrels_total']
+        S_k      = r['S_kraft']
+        S_g      = r['S_gehrels']
 
         if eef is not None:
             print(
@@ -168,10 +211,10 @@ def _build_csv_rows(instrument, e_lo, e_hi, N_src, N_bkg_raw, B_scaled,
             'CR_gehrels_total':   '',
         }
         if eef_info is not None:
-            row['theta_arcmin']     = f"{eef_info['theta_arcmin']:.4f}"
+            row['theta_arcmin']     = f"{eef_info['theta_arcmin']:.4f}" if eef_info['theta_arcmin'] is not None else ''
             row['eef']              = f"{eef_info['eef']:.6f}"
-            row['energy_ev']        = f"{eef_info['energy_ev']:.0f}"
-            row['psf_file']         = os.path.basename(eef_info['psf_file'])
+            row['energy_ev']        = f"{eef_info['energy_ev']:.0f}" if eef_info['energy_ev'] is not None else ''
+            row['psf_file']         = os.path.basename(eef_info['psf_file']) if eef_info['psf_file'] else ''
             row['eef_extrapolated'] = str(eef_info['extrapolated'])
             row['eef_capped']       = (f"{eef_info['eef_capped']:.6f}"
                                        if eef_info['eef_capped'] is not None else '')
@@ -266,48 +309,78 @@ def _evt_pixel_to_sky(cx, cy, evt_hdr):
 
 
 # =============================================================================
-# PER-INSTRUMENT PIPELINE
+# DIAGNOSTIC PLOTS
 # =============================================================================
 
-def process_instrument(instrument: str, cfg: XMMConfig):
+def _save_plots(evt_x, evt_y, cx_evt, cy_evt, pscale_evt,
+                exp_meta, exp_stats,
+                instrument, e_lo, e_hi, cfg, out_dir,
+                src_coord, bkg_cx_evt, bkg_cy_evt, obsid_str):
     """
-    Full extraction and upper-limit calculation for one EPIC instrument.
+    Save diagnostic plots for one instrument.
 
-    Steps
-    -----
-    1.  Locate event file and exposure map.
-    2.  Load and filter events (PATTERN, FLAG, PI).
-    3.  Load exposure map.
-    4.  Convert source RA/Dec to event-file and exposure-map pixel coordinates.
-    5.  (Optional) Open interactive region selector GUI.
-    6.  Extract source and background counts from event table.
-    7.  Compute effective exposure from exposure map.
-    8.  Compute EEF from XMM CCF PSF file.
-    9.  Print and return results table.
-    10. Save diagnostic plots.
-    11. Write per-instrument CSV row.
+    Reuses the shared plot functions from xray_uplim.plots.
+    These functions accept (evt_x, evt_y, cx, cy, pscale, label, ...) and are
+    instrument-agnostic — originally written for NuSTAR but work for any
+    mission whose event file exposes X/Y sky pixel columns.
+    """
+    try:
+        from ..plots import radial_profile, exposure_histogram, region_image
+    except ImportError:
+        warnings.warn("Diagnostic plots skipped (xray_uplim.plots import failed).",
+                      RuntimeWarning, stacklevel=2)
+        return
+
+    radial_profile(
+        evt_x, evt_y, cx_evt, cy_evt, pscale_evt,
+        instrument, e_lo, e_hi, obsid_str, cfg, out_dir)
+
+    exposure_histogram(exp_meta, exp_stats, instrument, cfg, out_dir)
+
+    region_image(
+        evt_x, evt_y, cx_evt, cy_evt, pscale_evt,
+        instrument, e_lo, e_hi, obsid_str, cfg, out_dir,
+        src_ra_deg  = src_coord.ra.deg,
+        src_dec_deg = src_coord.dec.deg,
+        bkg_cx_evt  = bkg_cx_evt,
+        bkg_cy_evt  = bkg_cy_evt)
+
+
+# =============================================================================
+# PER-OBS / PER-INSTRUMENT EXTRACTION
+# =============================================================================
+
+def _load_and_extract_instrument(instrument, obsid_str, obs_data_dir, cfg,
+                                  run_gui=False):
+    """
+    Load event file and exposure map, extract counts and exposure for one
+    (instrument, obsid) pair.
 
     Parameters
     ----------
-    instrument : 'MOS1', 'MOS2', or 'PN'
-    cfg        : XMMConfig (validated before calling)
+    instrument    : 'MOS1', 'MOS2', or 'PN'
+    obsid_str     : str — single obsid string
+    obs_data_dir  : str — directory containing this obs's data files
+    cfg           : XMMConfig (may be a shallow copy with per-obs overrides)
+    run_gui       : bool — whether to open the interactive region selector
 
     Returns
     -------
-    dict with keys:
-        instrument, N_src, N_bkg_raw, B_scaled, area_ratio,
-        net_counts, t_eff_s, exp_stats, ul, energy, eef_info, csv_rows
+    dict with keys: instrument, obsid_str, date_obs, N_src, N_bkg_raw,
+        B_scaled, area_ratio, t_eff, exp_stats, eef_info, e_lo, e_hi,
+        bkg_cx_evt, bkg_cy_evt
     """
+    from ..coords import sky_to_evt_pixel, sky_to_img_pixel
+
     e_lo, e_hi = cfg.resolve_energy_band()
-    out_dir    = os.path.join(cfg.data_dir, "ul_products")
-    os.makedirs(out_dir, exist_ok=True)
+    out_dir    = os.path.join(obs_data_dir, "ul_products")
 
     print(f"\n{'='*70}")
-    print(f"  {instrument}")
+    print(f"  {instrument}  [obs: {obsid_str}]")
     print(f"{'='*70}")
 
     # -- Step 1: locate files -------------------------------------------------
-    evt_file, exp_file = locate_files(cfg, instrument)
+    evt_file, exp_file = locate_files(obs_data_dir, obsid_str, instrument, cfg)
     print(f"  Event file : {os.path.basename(evt_file)}")
     print(f"  Expmap     : {os.path.basename(exp_file)}")
 
@@ -319,7 +392,6 @@ def process_instrument(instrument: str, cfg: XMMConfig):
     exp_data, exp_hdr = load_expmap(exp_file)
 
     # -- Step 4: source pixel position ----------------------------------------
-    from ..coords import sky_to_evt_pixel, sky_to_img_pixel
     src_coord = parse_coord(cfg.ra, cfg.dec)
 
     cx_evt, cy_evt, pscale_evt = sky_to_evt_pixel(
@@ -349,7 +421,7 @@ def process_instrument(instrument: str, cfg: XMMConfig):
     bkg_cx_evt = cx_evt
     bkg_cy_evt = cy_evt
 
-    if cfg.use_gui:
+    if run_gui:
         from ..region_selector import select_regions_interactive
         print(f"\n  Opening interactive region selector for {instrument}...")
         sel = select_regions_interactive(
@@ -384,6 +456,12 @@ def process_instrument(instrument: str, cfg: XMMConfig):
                 cfg.bkg_mode = 'annulus'
                 bkg_cx_evt   = cx_evt
                 bkg_cy_evt   = cy_evt
+
+    elif cfg.bkg_mode == 'manual' and cfg.bkg_ra and cfg.bkg_dec:
+        # Reproject manual bkg sky coords to this obs's pixel frame
+        bkg_coord = parse_coord(cfg.bkg_ra, cfg.bkg_dec)
+        bkg_cx_evt, bkg_cy_evt, _ = sky_to_evt_pixel(
+            bkg_coord.ra.deg, bkg_coord.dec.deg, evt_hdr)
 
     print(f"\n  Src aperture : {cfg.src_radius_arcsec:.1f}\"")
     if cfg.bkg_mode == 'annulus':
@@ -444,113 +522,127 @@ def process_instrument(instrument: str, cfg: XMMConfig):
             "  https://www.cosmos.esa.int/web/xmm-newton/current-calibration-files",
             UserWarning, stacklevel=2)
 
-    # -- Step 9: results table ------------------------------------------------
-    eef_val    = eef_info['eef'] if eef_info is not None else None
-    ul_results = _print_results_table(
-        N_src, B_scaled, t_eff, N_bkg_raw, area_ratio,
-        cfg.confidence_levels, eef=eef_val)
-
-    # -- Step 10: diagnostic plots --------------------------------------------
+    # -- Step 9: diagnostic plots ---------------------------------------------
     if cfg.save_plots:
         _save_plots(evt_x, evt_y, cx_evt, cy_evt, pscale_evt,
                     exp_meta, exp_stats,
                     instrument, e_lo, e_hi, cfg, out_dir,
-                    src_coord, bkg_cx_evt, bkg_cy_evt)
+                    src_coord, bkg_cx_evt, bkg_cy_evt, obsid_str=obsid_str)
 
-    # -- Step 11: CSV rows ----------------------------------------------------
-    csv_rows = _build_csv_rows(
-        instrument, e_lo, e_hi, N_src, N_bkg_raw, B_scaled,
-        area_ratio, t_eff, ul_results, eef_info, cfg.obsid,
-        date_obs=date_obs)
+    return {
+        'instrument':  instrument,
+        'obsid_str':   obsid_str,
+        'date_obs':    date_obs,
+        'N_src':       N_src,
+        'N_bkg_raw':   N_bkg_raw,
+        'B_scaled':    B_scaled,
+        'area_ratio':  area_ratio,
+        't_eff':       t_eff,
+        'exp_stats':   exp_stats,
+        'eef_info':    eef_info,
+        'e_lo':        e_lo,
+        'e_hi':        e_hi,
+        'bkg_cx_evt':  bkg_cx_evt,
+        'bkg_cy_evt':  bkg_cy_evt,
+    }
+
+
+# =============================================================================
+# PER-INSTRUMENT PIPELINE (single-obsid wrapper)
+# =============================================================================
+
+def process_instrument(instrument: str, cfg: XMMConfig):
+    """
+    Full extraction and upper-limit calculation for one EPIC instrument.
+
+    Thin wrapper around _load_and_extract_instrument for single-obsid
+    backward compatibility.
+
+    Parameters
+    ----------
+    instrument : 'MOS1', 'MOS2', or 'PN'
+    cfg        : XMMConfig (validated before calling)
+
+    Returns
+    -------
+    dict with keys:
+        instrument, date_obs, N_src, N_bkg_raw, B_scaled, area_ratio,
+        net_counts, t_eff_s, exp_stats, ul, energy, eef_info, csv_rows
+    """
+    obsid_str    = cfg.obsids[0]
+    obs_data_dir = cfg.data_dir  # single-obs: data_dir IS the obs dir
+
+    raw = _load_and_extract_instrument(instrument, obsid_str, obs_data_dir,
+                                        cfg, run_gui=cfg.use_gui)
+
+    e_lo, e_hi = raw['e_lo'], raw['e_hi']
+    eef_val    = raw['eef_info']['eef'] if raw['eef_info'] is not None else None
+
+    ul_results = _print_results_table(raw['N_src'], raw['B_scaled'], raw['t_eff'],
+                                       raw['N_bkg_raw'], raw['area_ratio'],
+                                       cfg.confidence_levels, eef=eef_val)
+
+    csv_rows = _build_csv_rows(instrument, e_lo, e_hi, raw['N_src'], raw['N_bkg_raw'],
+                                raw['B_scaled'], raw['area_ratio'], raw['t_eff'],
+                                ul_results, raw['eef_info'], obsid_str,
+                                date_obs=raw['date_obs'], result_type='individual')
 
     return {
         'instrument': instrument,
-        'date_obs':   date_obs,
-        'N_src':      N_src,
-        'N_bkg_raw':  N_bkg_raw,
-        'B_scaled':   B_scaled,
-        'area_ratio': area_ratio,
-        'net_counts': N_src - B_scaled,
-        't_eff_s':    t_eff,
-        'exp_stats':  exp_stats,
+        'date_obs':   raw['date_obs'],
+        'N_src':      raw['N_src'],
+        'N_bkg_raw':  raw['N_bkg_raw'],
+        'B_scaled':   raw['B_scaled'],
+        'area_ratio': raw['area_ratio'],
+        'net_counts': raw['N_src'] - raw['B_scaled'],
+        't_eff_s':    raw['t_eff'],
+        'exp_stats':  raw['exp_stats'],
         'ul':         ul_results,
         'energy':     (e_lo, e_hi),
-        'eef_info':   eef_info,
+        'eef_info':   raw['eef_info'],
         'csv_rows':   csv_rows,
     }
 
 
 # =============================================================================
-# DIAGNOSTIC PLOTS
+# MAIN PIPELINE — handles single and multi-obsid
 # =============================================================================
 
-def _save_plots(evt_x, evt_y, cx_evt, cy_evt, pscale_evt,
-                exp_meta, exp_stats,
-                instrument, e_lo, e_hi, cfg, out_dir,
-                src_coord, bkg_cx_evt, bkg_cy_evt):
+def process_observations(cfg: XMMConfig):
     """
-    Save diagnostic plots for one instrument.
+    Main pipeline entry point.  Handles single-obsid (backward-compatible)
+    and multi-obsid co-adding.
 
-    Reuses the shared plot functions from xray_uplim.plots.
-    These functions accept (evt_x, evt_y, cx, cy, pscale, label, ...) and are
-    instrument-agnostic — originally written for NuSTAR but work for any
-    mission whose event file exposes X/Y sky pixel columns.
-    """
-    try:
-        from ..plots import radial_profile, exposure_histogram, region_image
-    except ImportError:
-        warnings.warn("Diagnostic plots skipped (xray_uplim.plots import failed).",
-                      RuntimeWarning, stacklevel=2)
-        return
-
-    radial_profile(
-        evt_x, evt_y, cx_evt, cy_evt, pscale_evt,
-        instrument, e_lo, e_hi, cfg.obsid, cfg, out_dir)
-
-    exposure_histogram(exp_meta, exp_stats, instrument, cfg, out_dir)
-
-    region_image(
-        evt_x, evt_y, cx_evt, cy_evt, pscale_evt,
-        instrument, e_lo, e_hi, cfg.obsid, cfg, out_dir,
-        src_ra_deg  = src_coord.ra.deg,
-        src_dec_deg = src_coord.dec.deg,
-        bkg_cx_evt  = bkg_cx_evt,
-        bkg_cy_evt  = bkg_cy_evt)
-
-
-# =============================================================================
-# ENTRY POINT
-# =============================================================================
-
-def run_uplim(data_dir, obsid, ra, dec, **kwargs):
-    """
-    Run the full XMM-Newton upper-limit pipeline.
+    For multi-obsid mode, counts and exposures are summed per instrument
+    across all observations that have valid data for that instrument.
+    Individual per-observation upper limits are also reported and written
+    to CSV when n_obs > 1.
 
     Parameters
     ----------
-    data_dir : str           — ODF working directory (epproc/emproc output)
-    obsid    : str           — XMM observation ID (e.g. '0881990901')
-    ra       : str or float  — source RA  ("HH:MM:SS" or decimal degrees)
-    dec      : str or float  — source Dec ("±DD:MM:SS" or decimal degrees)
-    **kwargs : any XMMConfig field, e.g.
-                   instruments=['MOS1', 'PN'],
-                   energy_band='soft',
-                   src_radius_arcsec=20.0,
-                   confidence_levels=[0.9973],
-                   psf_dir='/path/to/ccf',
-                   save_plots=True
+    cfg : XMMConfig (already validated)
 
     Returns
     -------
-    list of result dicts — one per instrument processed
+    per_obs_raw : dict[obsid_str][instrument] — raw extraction dicts
     """
-    cfg = XMMConfig(data_dir=data_dir, obsid=obsid, ra=ra, dec=dec, **kwargs)
-    cfg.validate()
-
+    obsids = cfg.obsids
+    n_obs  = len(obsids)
+    src_coord = parse_coord(cfg.ra, cfg.dec)
     e_lo, e_hi = cfg.resolve_energy_band()
-    src_coord  = parse_coord(cfg.ra, cfg.dec)
-    out_dir    = os.path.join(cfg.data_dir, "ul_products")
 
+    # obsid_label for filenames: single string or "obs1+obs2"
+    obsid_label = cfg.obsid if isinstance(cfg.obsid, str) else '+'.join(obsids)
+
+    # Output dir
+    out_dir = os.path.join(cfg.data_dir, "ul_products")
+
+    # Save original aperture settings for gui_per_obs
+    _orig_aperture = {k: getattr(cfg, k) for k in (
+        'src_radius_arcsec', 'bkg_radius_arcsec', 'bkg_inner_factor',
+        'bkg_mode', 'bkg_ra', 'bkg_dec')}
+
+    # -- Print header ---------------------------------------------------------
     print("XMM-Newton EPIC Non-Detection Upper Limit")
     print("=" * 70)
     print(f"Source      :  RA = {src_coord.ra.deg:.6f} deg  "
@@ -564,30 +656,194 @@ def run_uplim(data_dir, obsid, ra, dec, **kwargs):
     print(f"Exp stat    :  {cfg.exp_stat}  (primary)")
     print(f"Bkg mode    :  {cfg.bkg_mode}")
     print(f"Data dir    :  {cfg.data_dir}")
-    print(f"Obs ID      :  {cfg.obsid}")
+    if n_obs > 1:
+        print(f"Obs IDs     :  {', '.join(obsids)}  [{n_obs} observations — co-adding]")
+    else:
+        print(f"Obs ID      :  {obsids[0]}")
     print()
 
-    all_results  = []
+    # -- Per-obs data directory -----------------------------------------------
+    def _obs_data_dir(obsid_str):
+        if n_obs == 1:
+            return cfg.data_dir
+        return os.path.join(cfg.data_dir, obsid_str)
+
+    # -- Load and extract all (obs, instrument) pairs -------------------------
+    # per_obs_raw[obsid_str][instrument] = dict from _load_and_extract_instrument
+    per_obs_raw = {}
+
+    for i, obsid_str in enumerate(obsids):
+        obs_data_dir = _obs_data_dir(obsid_str)
+
+        if n_obs > 1:
+            print(f"\n{'#'*70}")
+            print(f"  Observation {i+1}/{n_obs}:  {obsid_str}")
+            print(f"{'#'*70}")
+
+        # GUI mode for this obs
+        if cfg.use_gui and cfg.gui_per_obs:
+            cfg_obs = copy.copy(cfg)
+            for k, v in _orig_aperture.items():
+                setattr(cfg_obs, k, v)
+            run_gui_this = True
+        elif cfg.use_gui and i == 0:
+            cfg_obs = cfg
+            run_gui_this = True
+        else:
+            cfg_obs = cfg
+            run_gui_this = False
+
+        per_obs_raw[obsid_str] = {}
+        for instrument in cfg.instruments:
+            try:
+                raw = _load_and_extract_instrument(
+                    instrument, obsid_str, obs_data_dir, cfg_obs,
+                    run_gui=run_gui_this)
+                per_obs_raw[obsid_str][instrument] = raw
+            except FileNotFoundError as exc:
+                warnings.warn(
+                    f"\nSkipping {instrument} obs {obsid_str}: {exc}",
+                    UserWarning, stacklevel=2)
+                continue
+
+    # -- Per-instrument combined results --------------------------------------
     all_csv_rows = []
 
     for instrument in cfg.instruments:
-        try:
-            result = process_instrument(instrument, cfg)
-            all_results.append(result)
-            all_csv_rows.extend(result['csv_rows'])
-        except FileNotFoundError as exc:
-            warnings.warn(
-                f"\nSkipping {instrument}: {exc}",
-                UserWarning, stacklevel=2)
+        # Collect obs that have data for this instrument
+        obs_with_data = [oid for oid in obsids
+                         if instrument in per_obs_raw.get(oid, {})]
+        if not obs_with_data:
             continue
-        except Exception as exc:
-            warnings.warn(
-                f"\nError processing {instrument}: {exc}",
-                UserWarning, stacklevel=2)
-            raise
 
-    # -- Summary --------------------------------------------------------------
-    if all_results:
+        print(f"\n{'='*70}")
+        if n_obs > 1:
+            print(f"  {instrument} — co-added across {len(obs_with_data)} observations")
+        else:
+            print(f"  {instrument} — results")
+        print(f"{'='*70}")
+
+        # Individual per-obs ULs (only when n_obs > 1)
+        if n_obs > 1:
+            print(f"\n  -- Individual per-observation upper limits ({instrument}) --")
+            for obsid_str in obs_with_data:
+                raw = per_obs_raw[obsid_str][instrument]
+                eef_ind = raw['eef_info']['eef'] if raw['eef_info'] else None
+                ul_ind = _compute_ul_results(raw['N_src'], raw['B_scaled'],
+                                              raw['t_eff'], raw['N_bkg_raw'],
+                                              raw['area_ratio'],
+                                              cfg.confidence_levels, eef=eef_ind)
+                print(f"\n  Obs {obsid_str}:  N_src={raw['N_src']}  "
+                      f"B={raw['B_scaled']:.2f}  t_eff={raw['t_eff']/1e3:.3f} ks")
+                for r in ul_ind:
+                    tot_str = (f"  CR_tot={r['CR_kraft_total']:.3e}"
+                               if r['CR_kraft_total'] is not None else '')
+                    print(f"    CL={r['cl']:.4f}  "
+                          f"Kraft CR_ap={r['CR_kraft_aperture']:.3e}{tot_str}")
+
+                ind_rows = _build_csv_rows(
+                    instrument, raw['e_lo'], raw['e_hi'],
+                    raw['N_src'], raw['N_bkg_raw'], raw['B_scaled'],
+                    raw['area_ratio'], raw['t_eff'], ul_ind, raw['eef_info'],
+                    obsid_str, date_obs=raw['date_obs'], result_type='individual')
+                all_csv_rows.extend(ind_rows)
+
+        # Combined counts / exposure across observations for this instrument
+        N_total     = sum(per_obs_raw[oid][instrument]['N_src']     for oid in obs_with_data)
+        B_total     = sum(per_obs_raw[oid][instrument]['B_scaled']  for oid in obs_with_data)
+        N_bkg_total = sum(per_obs_raw[oid][instrument]['N_bkg_raw'] for oid in obs_with_data)
+        area_ratio  = per_obs_raw[obs_with_data[0]][instrument]['area_ratio']
+        t_total     = sum(per_obs_raw[oid][instrument]['t_eff']     for oid in obs_with_data)
+        e_lo_i      = per_obs_raw[obs_with_data[0]][instrument]['e_lo']
+        e_hi_i      = per_obs_raw[obs_with_data[0]][instrument]['e_hi']
+
+        # EEF: exposure-weighted average
+        all_eef = [per_obs_raw[oid][instrument]['eef_info'] for oid in obs_with_data]
+        if all(e is not None for e in all_eef):
+            t_eef_sum = sum(
+                per_obs_raw[oid][instrument]['t_eff'] *
+                per_obs_raw[oid][instrument]['eef_info']['eef']
+                for oid in obs_with_data)
+            eef_avg = t_eef_sum / t_total if t_total > 0 else None
+            eef_combined_info = {
+                'eef':           eef_avg,
+                'theta_arcmin':  None,
+                'pointing_ra':   None,
+                'pointing_dec':  None,
+                'psf_file':      all_eef[0]['psf_file'],   # representative
+                'energy_ev':     all_eef[0]['energy_ev'],
+                'extrapolated':  any(e['extrapolated'] for e in all_eef),
+                'eef_capped':    None,
+            }
+            eef_val = eef_avg
+
+            if n_obs > 1:
+                print(f"\n  -- EEF across {len(obs_with_data)} observations "
+                      f"({instrument}) --")
+                for oid in obs_with_data:
+                    raw = per_obs_raw[oid][instrument]
+                    ei  = raw['eef_info']
+                    print(f"    {oid}: theta={ei['theta_arcmin']:.3f}'  "
+                          f"EEF={ei['eef']:.4f}  "
+                          f"t*EEF={raw['t_eff']*ei['eef']/1e3:.3f} ks")
+                print(f"    Exposure-weighted EEF = {eef_avg:.4f}")
+        else:
+            eef_combined_info = None
+            eef_val = None
+
+        if n_obs > 1:
+            print(f"\n  -- Combined ({len(obs_with_data)} obs, {instrument}): "
+                  f"N_src={N_total}  B={B_total:.2f}  t_eff={t_total/1e3:.3f} ks --")
+
+        ul_combined = _print_results_table(
+            N_total, B_total, t_total, N_bkg_total, area_ratio,
+            cfg.confidence_levels, eef=eef_val)
+
+        date_obs_first = per_obs_raw[obs_with_data[0]][instrument].get('date_obs', '')
+        comb_obsid = obsid_label if n_obs > 1 else obsids[0]
+        comb_rtype = 'combined' if n_obs > 1 else 'individual'
+
+        comb_rows = _build_csv_rows(
+            instrument, e_lo_i, e_hi_i, N_total, N_bkg_total, B_total,
+            area_ratio, t_total, ul_combined, eef_combined_info,
+            comb_obsid, date_obs=date_obs_first, result_type=comb_rtype)
+        all_csv_rows.extend(comb_rows)
+
+    # -- Summary table --------------------------------------------------------
+    # Collect combined results for summary display
+    combined_results = {}
+    for instrument in cfg.instruments:
+        obs_with_data = [oid for oid in obsids
+                         if instrument in per_obs_raw.get(oid, {})]
+        if not obs_with_data:
+            continue
+        N_total = sum(per_obs_raw[oid][instrument]['N_src']    for oid in obs_with_data)
+        B_total = sum(per_obs_raw[oid][instrument]['B_scaled'] for oid in obs_with_data)
+        t_total = sum(per_obs_raw[oid][instrument]['t_eff']    for oid in obs_with_data)
+        eef_infos = [per_obs_raw[oid][instrument]['eef_info'] for oid in obs_with_data]
+        eef_str = 'N/A'
+        if all(e is not None for e in eef_infos):
+            t_eef_sum = sum(per_obs_raw[oid][instrument]['t_eff'] *
+                            per_obs_raw[oid][instrument]['eef_info']['eef']
+                            for oid in obs_with_data)
+            eef_avg = t_eef_sum / t_total if t_total > 0 else None
+            if eef_avg is not None:
+                eef_str = f"{eef_avg:.3f}"
+        combined_results[instrument] = {
+            'N_src':   N_total,
+            'B_scaled': B_total,
+            't_eff_s':  t_total,
+            'eef_str':  eef_str,
+        }
+        # Attach ul_results for this instrument from all_csv_rows (recompute)
+        area_ratio = per_obs_raw[obs_with_data[0]][instrument]['area_ratio']
+        N_bkg_total = sum(per_obs_raw[oid][instrument]['N_bkg_raw'] for oid in obs_with_data)
+        eef_val2 = float(eef_str) if eef_str != 'N/A' else None
+        ul_sum = _compute_ul_results(N_total, B_total, t_total, N_bkg_total,
+                                      area_ratio, cfg.confidence_levels, eef=eef_val2)
+        combined_results[instrument]['ul'] = ul_sum
+
+    if combined_results:
         print(f"\n{'='*70}")
         print("  SUMMARY")
         print(f"{'='*70}")
@@ -595,20 +851,50 @@ def run_uplim(data_dir, obsid, ra, dec, **kwargs):
               f"{'t_eff (ks)':>11}  {'EEF':>6}  "
               f"{'Kraft CR_ap (3σ)':>18}")
         print("  " + "-" * 68)
-        for r in all_results:
-            eef_str = (f"{r['eef_info']['eef']:.3f}"
-                       if r['eef_info'] is not None else "  N/A")
-            # 3σ row — first CL >= 0.997
-            ul_row  = next((u for u in r['ul'] if u['cl'] >= 0.997), r['ul'][-1])
-            print(f"  {r['instrument']:<8}  {r['N_src']:>6}  "
-                  f"{r['B_scaled']:>9.2f}  "
-                  f"{r['t_eff_s']/1e3:>11.3f}  "
-                  f"{eef_str:>6}  "
+        for instrument, cr in combined_results.items():
+            ul_row = next((u for u in cr['ul'] if u['cl'] >= 0.997), cr['ul'][-1])
+            print(f"  {instrument:<8}  {cr['N_src']:>6}  "
+                  f"{cr['B_scaled']:>9.2f}  "
+                  f"{cr['t_eff_s']/1e3:>11.3f}  "
+                  f"{cr['eef_str']:>6}  "
                   f"{ul_row['CR_kraft_aperture']:>18.4e}")
         print()
 
-    # -- Write CSV ------------------------------------------------------------
+    # -- Write CSV + XLSX -----------------------------------------------------
+    os.makedirs(out_dir, exist_ok=True)
     if all_csv_rows:
-        write_results_csv(all_csv_rows, out_dir, cfg.obsid)
+        write_results_csv(all_csv_rows, out_dir, obsid_label)
 
-    return all_results
+    print("\nDone.")
+    return per_obs_raw
+
+
+# =============================================================================
+# ENTRY POINT
+# =============================================================================
+
+def run_uplim(data_dir, obsid, ra, dec, **kwargs):
+    """
+    Run the full XMM-Newton upper-limit pipeline.
+
+    Parameters
+    ----------
+    data_dir : str           — ODF working directory (epproc/emproc output)
+    obsid    : str or list   — XMM observation ID(s).  Pass a list to co-add.
+    ra       : str or float  — source RA  ("HH:MM:SS" or decimal degrees)
+    dec      : str or float  — source Dec ("±DD:MM:SS" or decimal degrees)
+    **kwargs : any XMMConfig field, e.g.
+                   instruments=['MOS1', 'PN'],
+                   energy_band='soft',
+                   src_radius_arcsec=20.0,
+                   confidence_levels=[0.9973],
+                   psf_dir='/path/to/ccf',
+                   save_plots=True
+
+    Returns
+    -------
+    per_obs_raw : dict[obsid_str][instrument]
+    """
+    cfg = XMMConfig(data_dir=data_dir, obsid=obsid, ra=ra, dec=dec, **kwargs)
+    cfg.validate()
+    return process_observations(cfg)
