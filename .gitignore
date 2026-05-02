@@ -1,6 +1,3 @@
-# Claude workspace
-.claude/
-
 # Python
 __pycache__/
 *.py[cod]
@@ -24,11 +21,9 @@ build/
 # Large calibration files — must be copied manually from CALDB/CCF.
 # NuSTAR: copy nu[A/B]2dpsfen*_*.fits from $CALDB/data/nustar/fpm/bcf/psf/
 # XMM:    copy XRT[1-3]_XPSF_*.CCF from your SAS_CCFPATH directory
-# Swift:  psfconst_xrt.fits is only 11 KB — it IS tracked in the repo (see exception below).
 xray_uplim/data/nustar/
 xray_uplim/data/xmm/
-# Bundled Swift XRT PSF (11 KB) — ships with the repo, no install needed.
-# The *.fits rule above would catch it; this exception restores it.
+# Bundled Swift XRT PSF ships with the repo, no install needed.
 !xray_uplim/data/swift/psf/psfconst_xrt.fits
 
 # Outputs
@@ -37,10 +32,6 @@ results/
 *.pdf
 *.json
 *.txt
-
-# Ignore specific local files
-compare_eef_methods.py
-Sanjana_Comp_Astro_Project_Proposal.pdf
 
 # Virtual environments
 venv/
