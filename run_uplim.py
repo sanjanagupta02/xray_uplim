@@ -142,10 +142,10 @@ SWIFT = dict(
 
     exp_stat          = 'median',   # 'median' | 'mean' | 'psf_weighted'
 
-    caldb_dir         = "",   # leave empty — $CALDB is checked automatically, then
-                              # bundled psfconst_xrt.fits is used as fallback.
-                              # or set explicitly: caldb_dir = "/path/to/caldb"
-                              # (file expected at <caldb_dir>/data/swift/xrt/cpf/psf/)
+    psf_file          = "",   # leave empty — bundled psfconst_xrt.fits is used
+                              # (identical to HEASoft 6.36 / XIMAGE calibration).
+                              # Set to an absolute path only if you have a newer
+                              # or custom PSF coefficient file to use instead.
 
     confidence_levels = [0.9545, 0.9973],   # ~2σ and ~3σ
 

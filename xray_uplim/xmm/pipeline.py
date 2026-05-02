@@ -134,11 +134,12 @@ def _print_results_table(N_src, B_scaled, t_eff, N_bkg_raw, area_ratio,
 
 def _build_csv_rows(instrument, e_lo, e_hi, N_src, N_bkg_raw, B_scaled,
                     area_ratio, t_eff, ul_results, eef_info, obsid,
-                    date_obs=''):
+                    date_obs='', result_type='individual'):
     """Build a list of CSV row dicts (one per confidence level) for one instrument."""
     rows = []
     for r in ul_results:
         row = {
+            'result_type':        result_type,
             'obsid':              obsid,
             'date_obs':           date_obs,
             'instrument':         instrument,
@@ -199,6 +200,7 @@ def write_results_csv(rows, out_dir, obsid):
     csv_path = os.path.join(out_dir, f"xmm_uplim_{obsid}.csv")
 
     fieldnames = [
+        'result_type',
         'obsid', 'date_obs', 'instrument', 'energy_lo_kev', 'energy_hi_kev',
         'N_src', 'N_bkg_raw', 'B_scaled', 'area_ratio',
         't_eff_s',

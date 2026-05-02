@@ -17,18 +17,20 @@ Custom band: tuple e.g. (0.5, 7.0) or string '(0.5, 7.0)'.
 PSF calibration
 ---------------
 The PSF is modelled as a King + Gaussian profile using coefficients from
-the XIMAGE calibration file psfconst_xrt.fits, which is bundled with
-HEASoft under image/ximage/cal/swift/xrt/psfconst_xrt.fits.
+the XIMAGE calibration file psfconst_xrt.fits (swxpsf20010101v004.fits),
+produced by the XRT calibration team at OAB and shipped with HEASoft under
+  image/ximage/cal/swift/xrt/psfconst_xrt.fits
+
+This file is bundled with xray_uplim (xray_uplim/data/swift/psf/) and used
+by default — no CALDB or HEASoft installation required.
 
 In practice the Gaussian fraction P0 = 0 for all current calibrations,
 so the PSF reduces to a pure King profile:
     EEF(r) = 1 − [1 + (r/rc)²]^(1−η)
-where rc and η depend on energy and off-axis angle.
+where rc and η are bilinear functions of energy and off-axis angle.
 
-Search order for the PSF file:
-    1. <caldb_dir>/data/swift/xrt/cpf/psf/psfconst_xrt.fits
-    2. $CALDB/data/swift/xrt/cpf/psf/psfconst_xrt.fits
-    3. xray_uplim/data/swift/psf/psfconst_xrt.fits  (dev copy)
+To use a different PSF file (e.g. a future updated version), set:
+    psf_file = "/path/to/your/psfconst_xrt.fits"
 
 Readout modes
 -------------
@@ -40,7 +42,6 @@ Mode is auto-detected from the event file DATAMODE keyword.
 import os
 import re
 import math
-import glob
 import warnings
 from dataclasses import dataclass, field
 from typing import List, Tuple, Union
@@ -75,9 +76,10 @@ class SwiftConfig:
         Swift XRT on-axis FWHM ≈ 5–6 arcsec.
     energy_band : str or tuple
         Named band or custom (e_lo_kev, e_hi_kev) tuple.  See module docstring.
-    caldb_dir : str
-        Path to CALDB root directory.  Leave empty to use $CALDB or the
-        bundled dev copy of psfconst_xrt.fits.
+    psf_file : str
+        Path to an alternative psfconst_xrt.fits (or any compatible XRT PSF
+        coefficient file).  Leave empty (default) to use the bundled file,
+        which is identical to the one shipped with HEASoft 6.36.
     bkg_mode : str
         'annulus' — background annulus centred on source (default).
         'manual'  — user-supplied background circle; set bkg_ra / bkg_dec.
@@ -113,8 +115,10 @@ class SwiftConfig:
     # -- Energy band ----------------------------------------------------------
     energy_band : Union[str, Tuple[float, float]] = 'full'
 
-    # -- CALDB ----------------------------------------------------------------
-    caldb_dir : str = ""
+    # -- PSF file (optional override) -----------------------------------------
+    psf_file : str = ""
+    # Leave empty to use the bundled psfconst_xrt.fits (same file as HEASoft 6.36).
+    # Set to an absolute path if you have a newer or custom PSF coefficient file.
 
     # -- Background -----------------------------------------------------------
     bkg_mode : str               = 'annulus'
@@ -162,7 +166,6 @@ class SwiftConfig:
 
     # PSF filename inside CALDB subtree and dev location
     PSF_FILENAME  = 'psfconst_xrt.fits'
-    PSF_CALDB_SUB = os.path.join('data', 'swift', 'xrt', 'cpf', 'psf')
 
     # =========================================================================
     # Methods
@@ -199,38 +202,26 @@ class SwiftConfig:
 
     def resolve_psf_file(self):
         """
-        Return path to psfconst_xrt.fits.
+        Return the path to the Swift XRT PSF coefficient file to use.
 
-        Search order:
-            1. <caldb_dir>/data/swift/xrt/cpf/psf/psfconst_xrt.fits
-            2. $CALDB/data/swift/xrt/cpf/psf/psfconst_xrt.fits
-            3. xray_uplim/data/swift/psf/psfconst_xrt.fits  (dev copy)
+        Resolution order
+        ----------------
+        1. psf_file= (user override) — use exactly this path.
+        2. Bundled xray_uplim/data/swift/psf/psfconst_xrt.fits — the
+           canonical XIMAGE calibration file, identical to the one shipped
+           with HEASoft 6.36 (swxpsf20010101v004.fits, OAB, 2006-10-23).
+           No CALDB or HEASoft installation required.
+
+        Raises FileNotFoundError if the chosen file does not exist.
         """
-        def _check(d):
-            p = os.path.join(d, self.PSF_FILENAME)
-            return p if os.path.isfile(p) else None
+        # 1. User-supplied override
+        if self.psf_file:
+            if not os.path.isfile(self.psf_file):
+                raise FileNotFoundError(
+                    f"psf_file not found:\n  {self.psf_file}")
+            return self.psf_file
 
-        # 1. Explicit caldb_dir
-        if self.caldb_dir:
-            p = _check(os.path.join(self.caldb_dir, self.PSF_CALDB_SUB))
-            if p:
-                return p
-            raise FileNotFoundError(
-                f"psfconst_xrt.fits not found in caldb_dir:\n"
-                f"  {os.path.join(self.caldb_dir, self.PSF_CALDB_SUB)}")
-
-        # 2. $CALDB environment variable
-        caldb_env = os.environ.get('CALDB', '')
-        if caldb_env:
-            p = _check(os.path.join(caldb_env, self.PSF_CALDB_SUB))
-            if p:
-                return p
-            warnings.warn(
-                f"$CALDB is set ({caldb_env!r}) but psfconst_xrt.fits not found "
-                f"under {self.PSF_CALDB_SUB}. Falling back to bundled dev copy.",
-                UserWarning, stacklevel=3)
-
-        # 3. Dev copy bundled with the package
+        # 2. Bundled file (default)
         bundled = os.path.join(
             os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
             'data', 'swift', 'psf', self.PSF_FILENAME)
@@ -238,13 +229,12 @@ class SwiftConfig:
             return bundled
 
         raise FileNotFoundError(
-            "Swift XRT PSF file (psfconst_xrt.fits) not found. Search order:\n"
-            "  1. <caldb_dir>/data/swift/xrt/cpf/psf/  (set caldb_dir= in config)\n"
-            "  2. $CALDB/data/swift/xrt/cpf/psf/       (set by HEASoft initialisation)\n"
-            "  3. xray_uplim/data/swift/psf/            (dev copy)\n"
-            "The file ships with HEASoft under:\n"
+            "Bundled Swift XRT PSF file not found:\n"
+            f"  {bundled}\n"
+            "This file should ship with xray_uplim. If it is missing, copy\n"
             "  <heasoft>/image/ximage/cal/swift/xrt/psfconst_xrt.fits\n"
-            "Copy it to any of the locations above.")
+            "to xray_uplim/data/swift/psf/, or set psf_file= to its path."
+        )
 
     def validate(self):
         """Raise ValueError for obviously wrong settings."""

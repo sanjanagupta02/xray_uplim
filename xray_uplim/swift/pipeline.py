@@ -419,8 +419,8 @@ def _extract_counts_exposure_eef(cfg, obs, bkg_cx_evt, bkg_cy_evt, e_lo, e_hi):
     except (RuntimeError, FileNotFoundError, KeyError) as exc:
         warnings.warn(
             f"EEF computation skipped: {exc}\n"
-            "Place psfconst_xrt.fits in xray_uplim/data/swift/psf/ or set "
-            "caldb_dir= to enable EEF-corrected upper limits.",
+            "The bundled psfconst_xrt.fits may be missing. Copy it from "
+            "<heasoft>/image/ximage/cal/swift/xrt/ or set psf_file= in config.",
             UserWarning, stacklevel=2)
 
     return dict(
@@ -802,14 +802,8 @@ def run_uplim(data_dir, obsid, ra, dec, **kwargs):
               f"[{obsids[0]} … {obsids[-1]}]")
         for oid in obsids:
             print(f"               {oid}")
-    if cfg.caldb_dir:
-        print(f"CALDB       :  {cfg.caldb_dir}")
-    else:
-        caldb_env = os.environ.get('CALDB', '')
-        if caldb_env:
-            print(f"CALDB       :  {caldb_env}  ($CALDB)")
-        else:
-            print(f"CALDB       :  not set — using bundled psfconst_xrt.fits")
+    if cfg.psf_file:
+        print(f"PSF file    :  {cfg.psf_file}  (user override)")
     print()
 
     result = process_observation(cfg)
