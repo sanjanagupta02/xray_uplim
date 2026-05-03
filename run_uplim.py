@@ -16,7 +16,7 @@ Or import and call from a notebook:
 # CONFIG  — edit this block
 # =============================================================================
 
-OBSERVATORY = 'nustar'    # 'nustar' | 'xmm' | 'swift'  ← set this first
+OBSERVATORY = 'chandra'    # 'nustar' | 'xmm' | 'swift' | 'chandra'  ← set this first
 
 # ---------------------------------------------------------------------------
 # NuSTAR settings  (used when OBSERVATORY = 'nustar')
@@ -164,6 +164,58 @@ SWIFT = dict(
     save_plots        = True,
 )
 
+# ---------------------------------------------------------------------------
+# Chandra ACIS settings  (used when OBSERVATORY = 'chandra')
+# ---------------------------------------------------------------------------
+# Requires CIAO to be initialised in the shell:
+#   conda activate ciao-4.XX
+#   source $ASCDS_INSTALL/bin/ciao.sh   (if needed)
+
+CHANDRA = dict(
+    base_path         = "/Users/sanjanagupta/Documents/data/Chandra/2022xxf",
+                        # Directory containing one sub-folder per obsid.
+                        # Each obsid folder should hold the standard CDA layout
+                        # (primary/ and secondary/).  chandra_repro is run
+                        # automatically if obsid/repro/ does not exist yet.
+
+    obsid             = "26631",
+                        # or: obsid = ["26631", "26632"]  — co-adds both obs
+
+    ra                = "11:30:05.94",   # "HH:MM:SS.ss" or decimal degrees
+    dec               = "+09:16:57.37",  # "±DD:MM:SS.ss" or decimal degrees
+
+    src_radius_arcsec = 5.0,    # Chandra on-axis FWHM ≈ 0.5–1"; typical 2–10"
+    bkg_radius_arcsec = 15.0,   # outer radius of background annulus
+    bkg_inner_factor  = 1.0,    # inner radius = src_radius * this
+
+    psf_fwhm_arcsec   = 0.9,    # on-axis ACIS; increase for off-axis sources
+
+    energy_band       = (0.3, 10.0),  # 'broad' (0.5–7) | 'soft' (0.5–2) |
+                                  # 'medium' (2–4) | 'hard' (4–7) |
+                                  # 'full' (0.5–10) | 'ultrasoft' (0.3–1) |
+                                  # or custom tuple e.g. (1.0, 6.0)
+
+    bkg_mode          = 'annulus',  # 'annulus' or 'manual'
+    bkg_ra            = "",         # only used if bkg_mode = 'manual'
+    bkg_dec           = "",
+
+    confidence_levels = [0.68, 0.9545, 0.9973],   # ~2σ and ~3σ
+
+    ciao_prefix       = "/Applications/ciao-4.18",     # Leave empty — CIAO conda env is auto-detected.
+                                # Set explicitly only if auto-detection fails, e.g.
+                                #   ciao_prefix = "~/opt/miniconda3/envs/ciao-4.16"
+
+    run_repro         = True,   # auto-run chandra_repro if repro/ not found
+
+    use_aprates       = True,   # True: CIAO aprates (primary, recommended)
+                                # False: pure-Python Kraft/Gehrels only
+
+    use_gui           = True,   # True: interactive region selector
+    gui_per_obs       = False,  # True: independent GUI for each obs
+                                # False (default): GUI for first obs only
+    save_plots        = True,
+)
+
 # =============================================================================
 
 if __name__ == "__main__":
@@ -179,7 +231,11 @@ if __name__ == "__main__":
         from xray_uplim.swift import run_uplim
         run_uplim(**SWIFT)
 
+    elif OBSERVATORY == 'chandra':
+        from xray_uplim.chandra import run_uplim
+        run_uplim(**CHANDRA)
+
     else:
         raise ValueError(
             f"Unknown OBSERVATORY '{OBSERVATORY}'. "
-            "Choose 'nustar', 'xmm', or 'swift'.")
+            "Choose 'nustar', 'xmm', 'swift', or 'chandra'.")

@@ -3,8 +3,7 @@ xray_uplim
 ==========
 Unified X-ray non-detection upper limit calculator.
 
-Supports NuSTAR (native), XMM-Newton (native, in development),
-Swift/XRT (planned), and Chandra/CIAO (planned).
+Supports NuSTAR, XMM-Newton, Swift/XRT, and Chandra/ACIS (requires CIAO).
 
 Quickstart — NuSTAR
 -------------------
