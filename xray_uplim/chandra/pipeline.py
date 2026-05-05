@@ -104,84 +104,51 @@ def _compute_ul_results(N_src, B_scaled, t_eff, N_bkg_raw, area_ratio,
 def _print_results_table(N_src, B_scaled, t_eff, N_bkg_raw, area_ratio,
                           confidence_levels, eef=None, aprates_results=None,
                           psf_fwhm_arcsec=None):
-    """Compute and print upper limits at every confidence level."""
+    """
+    Compute upper limits and print a concise summary (one line per CL).
+
+    When CIAO aprates ran successfully, prints only the aprates result
+    (total source rate if EEF is available, aperture rate otherwise).
+    When aprates was not run, falls back to the Bayesian marginalized limit.
+    Full results (all methods, all CLs) are always written to the CSV.
+    """
     results = _compute_ul_results(
         N_src, B_scaled, t_eff, N_bkg_raw, area_ratio,
         confidence_levels, eef=eef, aprates_results=aprates_results)
-    CR_net   = results[0]['CR_net']
-    CR_sigma = results[0]['CR_sigma']
-
-    print(f"\n  Point estimate  (N_src − B) / t_eff  [NOT an upper limit]")
-    print(f"    = ({N_src} − {B_scaled:.1f}) / {t_eff:.1f} s")
-    print(f"    = {CR_net:+.4e} cts/s  ±  {CR_sigma:.4e}  (1-sigma Poisson)")
-    if CR_net < 0:
-        print("    (Negative — source aperture below expected background: "
-              "clean non-detection)")
 
     has_aprates = aprates_results is not None
     has_eef     = eef is not None
 
-    print(f"\n  Upper limits:")
-
-    # ---- primary table: aprates (if available) + marginalized cross-check ----
     if has_aprates and has_eef:
-        hdr = (f"  {'CL':>8}  "
-               f"{'aprates UL_ap':>14}  {'aprates UL_tot':>14}  "
-               f"{'Marg CR_ap':>13}  {'Marg CR_tot':>13}")
+        method_label = "CIAO aprates total source count rate"
     elif has_aprates:
-        hdr = (f"  {'CL':>8}  "
-               f"{'aprates UL_ap':>14}  "
-               f"{'Marg CR_ap':>13}")
+        method_label = "CIAO aprates aperture count rate"
     elif has_eef:
-        hdr = (f"  {'CL':>8}  {'Net CR':>13}  "
-               f"{'Marg CR_ap':>13}  {'Marg CR_tot':>13}  "
-               f"{'Geh CR_ap':>13}  {'Geh CR_tot':>13}")
+        method_label = "Bayesian marginalized total source count rate"
     else:
-        hdr = (f"  {'CL':>8}  {'Net CR':>13}  "
-               f"{'Marg CR_ap':>13}  {'Geh CR_ap':>13}")
+        method_label = "Bayesian marginalized aperture count rate"
 
-    divider = "  " + "-" * (len(hdr) - 2)
-    print(hdr)
-    print(divider)
-
+    print(f"\n  Upper limits  ({method_label}, cts/s):")
     for r in results:
         if has_aprates and has_eef:
-            ap_up_tot = (f"{r['aprates_ul_total']:.4e}"
-                         if r['aprates_ul_total'] is not None else "     N/A")
-            marg_tot = (f"{r['CR_marg_total']:.4e}"
-                        if r['CR_marg_total'] is not None else "     N/A")
-            print(f"  {r['cl']:8.4f}  "
-                  f"{r['aprates_ul_aperture']:14.4e}  {ap_up_tot:>14}  "
-                  f"{r['CR_marg_aperture']:13.4e}  "
-                  f"{marg_tot:>13}")
+            val = (r['aprates_ul_total'] if r['aprates_ul_total'] is not None
+                   else r['aprates_ul_aperture'])
         elif has_aprates:
-            print(f"  {r['cl']:8.4f}  "
-                  f"{r['aprates_ul_aperture']:14.4e}  "
-                  f"{r['CR_marg_aperture']:13.4e}")
+            val = r['aprates_ul_aperture']
         elif has_eef:
-            print(f"  {r['cl']:8.4f}  {CR_net:+13.4e}  "
-                  f"{r['CR_marg_aperture']:13.4e}  {r['CR_marg_total']:13.4e}  "
-                  f"{r['CR_gehrels_aperture']:13.4e}  {r['CR_gehrels_total']:13.4e}")
+            val = r['CR_marg_total']
         else:
-            print(f"  {r['cl']:8.4f}  {CR_net:+13.4e}  "
-                  f"{r['CR_marg_aperture']:13.4e}  "
-                  f"{r['CR_gehrels_aperture']:13.4e}")
+            val = r['CR_marg_aperture']
+        print(f"    {r['cl']*100:.1f}%:  < {val:.4e}")
 
-    print(divider)
-    if has_aprates:
-        print("  aprates UL_ap  = aperture upper limit (cts/s) from CIAO aprates.")
-        if has_eef:
-            print(f"  aprates UL_tot = EEF-corrected total source rate = UL_ap / EEF.")
-            fwhm_str = (f"{psf_fwhm_arcsec:.3f}" if psf_fwhm_arcsec is not None
-                        else "?")
-            print(f"  EEF used: {eef:.4f}  (Gaussian FWHM = {fwhm_str} arcsec)")
-        print("  Marg CR_ap is printed as a cross-check.")
+    if has_aprates and has_eef:
+        print(f"  (EEF = {eef:.4f};  all methods and CLs in CSV)")
+    elif has_aprates:
+        print(f"  (EEF unavailable — aperture rate only;  all methods and CLs in CSV)")
+    elif has_eef:
+        print(f"  (EEF = {eef:.4f};  CIAO aprates not run — all CLs in CSV)")
     else:
-        print("  Marg CR_ap  = marginalized aperture count-rate upper limit (cts/s).")
-        if has_eef:
-            print(f"  Marg CR_tot = EEF-corrected total source rate = CR_ap / EEF.")
-            print(f"  EEF used: {eef:.4f}")
-        print("  Note: aprates was not run — only marginalized/Gehrels results.")
+        print(f"  (CIAO aprates not run;  EEF unavailable — all CLs in CSV)")
 
     return results
 

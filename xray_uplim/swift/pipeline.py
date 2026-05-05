@@ -69,60 +69,26 @@ def _compute_ul_results(N_src, B_scaled, t_eff, N_bkg_raw, area_ratio,
 
 def _print_results_table(N_src, B_scaled, t_eff, N_bkg_raw, area_ratio,
                           confidence_levels, eef=None):
-    """Compute and print upper limits at every confidence level."""
+    """
+    Compute upper limits and print a concise summary (one line per CL).
+
+    Displays the Bayesian marginalized total source count rate when EEF is
+    available, otherwise the aperture count rate.  Full results (all methods,
+    all CLs) are always written to the CSV.
+    """
     results = _compute_ul_results(N_src, B_scaled, t_eff, N_bkg_raw,
                                    area_ratio, confidence_levels, eef)
-    CR_net   = results[0]['CR_net']
-    CR_sigma = results[0]['CR_sigma']
 
-    print(f"\n  Point estimate  (N_src - B) / t_eff  [NOT an upper limit]")
-    print(f"    = ({N_src} - {B_scaled:.1f}) / {t_eff:.1f} s")
-    print(f"    = {CR_net:+.4e} cts/s  ±  {CR_sigma:.4e}  (1-sigma Poisson)")
-    if CR_net < 0:
-        print(f"    (Negative — source aperture below expected background: "
-              f"clean non-detection)")
-
-    print(f"\n  Upper limits:")
-    if eef is not None:
-        header = (
-            f"  {'CL':>8}  {'Net CR':>13}  "
-            f"{'Marg CR_ap':>13}  {'Marg CR_tot':>13}  "
-            f"{'Geh S_ul':>10}  {'Geh CR_ap':>13}  {'Geh CR_tot':>13}"
-        )
-    else:
-        header = (
-            f"  {'CL':>8}  {'Net CR':>13}  "
-            f"{'Marg CR_ap':>13}  "
-            f"{'Geh S_ul':>10}  {'Geh CR_ap':>13}"
-        )
-    divider = "  " + "-" * (len(header) - 2)
-    print(header)
-    print(divider)
-
+    use_total = eef is not None
+    rate_label = "total source count rate" if use_total else "aperture count rate"
+    print(f"\n  Upper limits  (Bayesian marginalized {rate_label}, cts/s):")
     for r in results:
-        if eef is not None:
-            print(
-                f"  {r['cl']:8.4f}  {CR_net:+13.4e}  "
-                f"{r['CR_marg_aperture']:13.4e}  "
-                f"{r['CR_marg_total']:13.4e}  "
-                f"{r['S_gehrels']:10.3f}  {r['CR_gehrels_aperture']:13.4e}  "
-                f"{r['CR_gehrels_total']:13.4e}"
-            )
-        else:
-            print(
-                f"  {r['cl']:8.4f}  {CR_net:+13.4e}  "
-                f"{r['CR_marg_aperture']:13.4e}  "
-                f"{r['S_gehrels']:10.3f}  {r['CR_gehrels_aperture']:13.4e}"
-            )
-
-    print(divider)
-    if eef is not None:
-        print(f"  Marg CR_ap  = marginalized aperture count-rate UL (cts/s).")
-        print(f"  Marg CR_tot = total source rate UL; computed via Bayesian integral")
-        print(f"                with effective exposure t_eff × EEF (EEF={eef:.4f}).")
+        val = r['CR_marg_total'] if use_total else r['CR_marg_aperture']
+        print(f"    {r['cl']*100:.1f}%:  < {val:.4e}")
+    if use_total:
+        print(f"  (EEF = {eef:.4f};  all methods and CLs in CSV)")
     else:
-        print(f"  Marg CR_ap is the marginalized aperture count-rate upper limit.")
-        print(f"  EEF correction skipped (psfconst_xrt.fits not found).")
+        print(f"  (EEF unavailable — aperture rate only;  all CLs in CSV)")
 
     return results
 
@@ -640,13 +606,16 @@ def process_observation(cfg: SwiftConfig):
     # ------------------------------------------------------------------ #
     # Step 9a: per-obs UL (computed quietly; printed as brief summary)    #
     # ------------------------------------------------------------------ #
+    # Determine whether any observation has EEF, to set column label once
+    any_eef = any(r['eef_info'] is not None for r in per_obs)
+    ul_col_label = "Marg CR_tot (3σ)" if any_eef else "Marg CR_ap (3σ)"
+
     if n_obs > 1:
         print(f"\n{'='*70}")
         print(f"  Per-observation summary  ({n_obs} observations)")
         print(f"{'='*70}")
-        ul3_col = 'CR_marg_aperture'
         print(f"  {'Obs ID':>14}  {'N_src':>6}  {'B_scaled':>9}  "
-              f"{'t_eff (ks)':>11}  {'EEF':>6}  {'Marg CR_ap (3σ)':>18}")
+              f"{'t_eff (ks)':>11}  {'EEF':>6}  {ul_col_label:>18}")
         print("  " + "-" * 76)
 
     for r in per_obs:
@@ -667,10 +636,13 @@ def process_observation(cfg: SwiftConfig):
             ul3_i = next((u for u in r['ul'] if u['cl'] >= 0.997), r['ul'][-1])
             eef_str_i = (f"{r['eef_info']['eef']:.3f}"
                          if r['eef_info'] is not None else "  N/A")
+            ul_val_i = (ul3_i['CR_marg_total']
+                        if ul3_i['CR_marg_total'] is not None
+                        else ul3_i['CR_marg_aperture'])
             print(f"  {r['obsid_str']:>14}  {r['N_src']:>6}  "
                   f"{r['B_scaled']:>9.2f}  {r['t_eff']/1e3:>11.3f}  "
                   f"{eef_str_i:>6}  "
-                  f"{ul3_i['CR_marg_aperture']:>18.4e}")
+                  f"{ul_val_i:>18.4e}")
 
     # ------------------------------------------------------------------ #
     # Step 9b: results table on combined counts                            #

@@ -82,12 +82,16 @@ def _compute_ul_results(N_src, B_scaled, t_eff, N_bkg_raw, area_ratio,
 def print_results_table(N_src, B_scaled, t_eff, N_bkg_raw, area_ratio,
                         confidence_levels, eef=None):
     """
-    Compute and print all three methods at every confidence level.
+    Compute upper limits and print a concise summary (one line per CL).
+
+    Displays the Bayesian marginalized total source count rate when EEF is
+    available, otherwise the aperture count rate.  Full results (all methods,
+    all CLs) are always written to the CSV.
 
     Parameters
     ----------
     eef : float or None
-        Encircled energy fraction.  If None, EEF-corrected columns are omitted.
+        Encircled energy fraction.  If None, reports aperture count rate.
 
     Returns
     -------
@@ -95,57 +99,17 @@ def print_results_table(N_src, B_scaled, t_eff, N_bkg_raw, area_ratio,
     """
     results = _compute_ul_results(N_src, B_scaled, t_eff, N_bkg_raw,
                                   area_ratio, confidence_levels, eef=eef)
-    CR_net   = results[0]['CR_net']
-    CR_sigma = results[0]['CR_sigma']
 
-    print(f"\n  Point estimate  (N_src - B) / t_eff  [NOT an upper limit]")
-    print(f"    = ({N_src} - {B_scaled:.1f}) / {t_eff:.1f} s")
-    print(f"    = {CR_net:+.4e} cts/s  ±  {CR_sigma:.4e}  (1-sigma Poisson)")
-    if CR_net < 0:
-        print(f"    (Negative — source aperture below expected background: "
-              f"clean non-detection)")
-
-    print(f"\n  Upper limits:")
-    if eef is not None:
-        header = (
-            f"  {'CL':>8}  {'Net CR':>13}  "
-            f"{'Marg CR_ap':>13}  {'Marg CR_tot':>13}  "
-            f"{'Geh S_ul':>10}  {'Geh CR_ap':>13}  {'Geh CR_tot':>13}"
-        )
-    else:
-        header = (
-            f"  {'CL':>8}  {'Net CR':>13}  "
-            f"{'Marg CR_ap':>13}  "
-            f"{'Geh S_ul':>10}  {'Geh CR_ap':>13}"
-        )
-    divider = "  " + "-" * (len(header) - 2)
-    print(header)
-    print(divider)
-
+    use_total = eef is not None
+    rate_label = "total source count rate" if use_total else "aperture count rate"
+    print(f"\n  Upper limits  (Bayesian marginalized {rate_label}, cts/s):")
     for r in results:
-        if eef is not None:
-            print(
-                f"  {r['cl']:8.4f}  {r['CR_net']:+13.4e}  "
-                f"{r['CR_marg_aperture']:13.4e}  "
-                f"{r['CR_marg_total']:13.4e}  "
-                f"{r['S_gehrels']:10.3f}  {r['CR_gehrels_aperture']:13.4e}  "
-                f"{r['CR_gehrels_total']:13.4e}"
-            )
-        else:
-            print(
-                f"  {r['cl']:8.4f}  {r['CR_net']:+13.4e}  "
-                f"{r['CR_marg_aperture']:13.4e}  "
-                f"{r['S_gehrels']:10.3f}  {r['CR_gehrels_aperture']:13.4e}"
-            )
-
-    print(divider)
-    if eef is not None:
-        print(f"  Marg CR_ap  = marginalized aperture count-rate UL (cts/s).")
-        print(f"  Marg CR_tot = total source rate UL; computed via Bayesian integral")
-        print(f"                with effective exposure t_eff × EEF (EEF={eef:.4f}).")
+        val = r['CR_marg_total'] if use_total else r['CR_marg_aperture']
+        print(f"    {r['cl']*100:.1f}%:  < {val:.4e}")
+    if use_total:
+        print(f"  (EEF = {eef:.4f};  all methods and CLs in CSV)")
     else:
-        print(f"  Marg CR_ap is the marginalized aperture count-rate upper limit.")
-        print(f"  EEF correction skipped (set caldb_dir to enable).")
+        print(f"  (EEF unavailable — aperture rate only;  all CLs in CSV)")
 
     return results
 
@@ -815,14 +779,12 @@ def process_observations(cfg):
                     raw['N_bkg_raw'], raw['area_ratio'],
                     cfg.confidence_levels, eef=eef_ind)
 
-                print(f"\n  Obs {obsid_str}:")
-                print(f"    N_src={raw['N_src']}  B={raw['B_scaled']:.2f}  "
-                      f"t_eff={raw['t_eff']/1e3:.3f} ks")
+                print(f"\n  Obs {obsid_str}:  N_src={raw['N_src']}  "
+                      f"B={raw['B_scaled']:.2f}  t_eff={raw['t_eff']/1e3:.3f} ks")
                 for r in ul_ind:
-                    tot_str = (f"  Marg CR_tot={r['CR_marg_total']:.3e}"
-                               if r['CR_marg_total'] is not None else '')
-                    print(f"    CL={r['cl']:.4f}  "
-                          f"Marg CR_ap={r['CR_marg_aperture']:.3e}{tot_str}")
+                    val = (r['CR_marg_total'] if r['CR_marg_total'] is not None
+                           else r['CR_marg_aperture'])
+                    print(f"    {r['cl']*100:.1f}%:  < {val:.3e} cts/s")
 
                 ind_rows = _build_csv_rows(
                     module, e_lo, e_hi,

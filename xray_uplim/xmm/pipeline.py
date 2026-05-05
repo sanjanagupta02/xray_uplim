@@ -93,20 +93,11 @@ def _compute_ul_results(N_src, B_scaled, t_eff, N_bkg_raw, area_ratio,
 def _print_results_table(N_src, B_scaled, t_eff, N_bkg_raw, area_ratio,
                           confidence_levels, eef=None):
     """
-    Compute and print upper limits at every confidence level.
+    Compute upper limits and print a concise summary (one line per CL).
 
-    Columns always printed
-    ----------------------
-    CL              one-sided confidence level
-    Net CR          (N_src - B_scaled) / t_eff  [point estimate, not a UL]
-    Marg CR_ap      marginalized aperture count-rate upper limit (cts/s)
-    Geh S_ul        Gehrels 1986 upper limit (counts)
-    Geh CR_ap       aperture count-rate upper limit (Gehrels)
-
-    Additional columns when eef is not None
-    ----------------------------------------
-    Marg CR_tot     EEF-corrected total source rate = CR_ap / EEF
-    Geh CR_tot      same for Gehrels
+    Displays the Bayesian marginalized total source count rate when EEF is
+    available, otherwise the aperture count rate.  Full results (all methods,
+    all CLs) are always written to the CSV.
 
     Returns
     -------
@@ -115,62 +106,16 @@ def _print_results_table(N_src, B_scaled, t_eff, N_bkg_raw, area_ratio,
     results = _compute_ul_results(N_src, B_scaled, t_eff, N_bkg_raw, area_ratio,
                                    confidence_levels, eef=eef)
 
-    CR_net   = results[0]['CR_net']   if results else 0.0
-    CR_sigma = results[0]['CR_sigma'] if results else 0.0
-
-    print(f"\n  Point estimate  (N_src - B) / t_eff  [NOT an upper limit]")
-    print(f"    = ({N_src} - {B_scaled:.1f}) / {t_eff:.1f} s")
-    print(f"    = {CR_net:+.4e} cts/s  ±  {CR_sigma:.4e}  (1-sigma Poisson)")
-    if CR_net < 0:
-        print(f"    (Negative — source aperture below expected background: "
-              f"clean non-detection)")
-
-    print(f"\n  Upper limits:")
-    if eef is not None:
-        header = (
-            f"  {'CL':>8}  {'Net CR':>13}  "
-            f"{'Marg CR_ap':>13}  {'Marg CR_tot':>13}  "
-            f"{'Geh S_ul':>10}  {'Geh CR_ap':>13}  {'Geh CR_tot':>13}"
-        )
-    else:
-        header = (
-            f"  {'CL':>8}  {'Net CR':>13}  "
-            f"{'Marg CR_ap':>13}  "
-            f"{'Geh S_ul':>10}  {'Geh CR_ap':>13}"
-        )
-    divider = "  " + "-" * (len(header) - 2)
-    print(header)
-    print(divider)
-
+    use_total = eef is not None
+    rate_label = "total source count rate" if use_total else "aperture count rate"
+    print(f"\n  Upper limits  (Bayesian marginalized {rate_label}, cts/s):")
     for r in results:
-        cl       = r['cl']
-        CR_m_ap  = r['CR_marg_aperture']
-        CR_g_ap  = r['CR_gehrels_aperture']
-        CR_m_tot = r['CR_marg_total']
-        CR_g_tot = r['CR_gehrels_total']
-        S_g      = r['S_gehrels']
-
-        if eef is not None:
-            print(
-                f"  {cl:8.4f}  {CR_net:+13.4e}  "
-                f"{CR_m_ap:13.4e}  {CR_m_tot:13.4e}  "
-                f"{S_g:10.3f}  {CR_g_ap:13.4e}  {CR_g_tot:13.4e}"
-            )
-        else:
-            print(
-                f"  {cl:8.4f}  {CR_net:+13.4e}  "
-                f"{CR_m_ap:13.4e}  "
-                f"{S_g:10.3f}  {CR_g_ap:13.4e}"
-            )
-
-    print(divider)
-    if eef is not None:
-        print(f"  Marg CR_ap  = marginalized aperture count-rate UL (cts/s).")
-        print(f"  Marg CR_tot = total source rate UL; computed via Bayesian integral")
-        print(f"                with effective exposure t_eff × EEF (EEF={eef:.4f}).")
+        val = r['CR_marg_total'] if use_total else r['CR_marg_aperture']
+        print(f"    {r['cl']*100:.1f}%:  < {val:.4e}")
+    if use_total:
+        print(f"  (EEF = {eef:.4f};  all methods and CLs in CSV)")
     else:
-        print(f"  Marg CR_ap is the marginalized aperture count-rate upper limit.")
-        print(f"  EEF correction skipped (PSF CCF file not found).")
+        print(f"  (EEF unavailable — aperture rate only;  all CLs in CSV)")
 
     return results
 
@@ -771,10 +716,9 @@ def process_observations(cfg: XMMConfig):
                 print(f"\n  Obs {obsid_str}:  N_src={raw['N_src']}  "
                       f"B={raw['B_scaled']:.2f}  t_eff={raw['t_eff']/1e3:.3f} ks")
                 for r in ul_ind:
-                    tot_str = (f"  Marg CR_tot={r['CR_marg_total']:.3e}"
-                               if r['CR_marg_total'] is not None else '')
-                    print(f"    CL={r['cl']:.4f}  "
-                          f"Marg CR_ap={r['CR_marg_aperture']:.3e}{tot_str}")
+                    val = (r['CR_marg_total'] if r['CR_marg_total'] is not None
+                           else r['CR_marg_aperture'])
+                    print(f"    {r['cl']*100:.1f}%:  < {val:.3e} cts/s")
 
                 ind_rows = _build_csv_rows(
                     instrument, raw['e_lo'], raw['e_hi'],
