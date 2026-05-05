@@ -167,6 +167,7 @@ def extract_exposure(exp_data, exp_hdr, cfg: SwiftConfig):
                         'exp_values': ndarray}
     cx_exp    : float  — source centre X in exposure-map pixels
     cy_exp    : float  — source centre Y in exposure-map pixels
+    pscale_exp: float  — exposure-map pixel scale (arcsec/pix)
     """
     src_coord = parse_coord(cfg.ra, cfg.dec)
     cx_exp, cy_exp, pscale_exp = sky_to_img_pixel(
@@ -192,4 +193,4 @@ def extract_exposure(exp_data, exp_hdr, cfg: SwiftConfig):
           f"({exp_meta['n_pix_nonzero']}/{exp_meta['n_pix_total']} "
           f"pix nonzero)")
 
-    return exp_stats, exp_meta, cx_exp, cy_exp
+    return exp_stats, exp_meta, cx_exp, cy_exp, pscale_exp

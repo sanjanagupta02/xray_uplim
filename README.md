@@ -301,6 +301,42 @@ Output → `base_path/{obsid}/ul_products/`
 
 ---
 
+## Statistical methods
+
+### Background scaling — exposure-weighted area ratio
+
+The source-to-background scaling factor (used to predict how many background counts fall inside the source aperture) is computed from the **exposure map** rather than from pure geometry:
+
+```
+area_ratio = Σ exp_map[source pixels] / Σ exp_map[background pixels]
+```
+
+This accounts for vignetting gradients: if the background annulus extends to larger off-axis angles, its effective exposure per pixel is lower than at the source position. The purely geometric ratio (π r_src² / π r_bkg²) ignores this and slightly under-corrects for background, leading to a conservatively high upper limit. The exposure-weighted ratio corrects this automatically. If the exposure map cannot cover the background region, the code falls back to the geometric ratio with a warning.
+
+### Upper limit on total source rate — EEF correction
+
+Given an encircled energy fraction EEF (the fraction of source photons that land inside the source aperture), the upper limit on the **total** source count rate is computed by running the Bayesian integral with an effective exposure of `t_eff × EEF`:
+
+```
+CR_marg_total = marginalized_upper_limit(N_src, N_bkg, alpha, t_eff × EEF, CL)
+```
+
+This is mathematically equivalent to `CR_marg_aperture / EEF` — the Poisson posterior transforms linearly under the change of variables `S_ap → S_tot = S_ap / EEF`. The form above is used because it makes the physical model explicit: expected source counts in the aperture = `S_tot × EEF × t_eff`. Both give the same numerical result.
+
+The aperture count rate (`CR_marg_aperture`) is always also reported and uses the standard `t_eff` — it is unchanged.
+
+### Background as a random variable — marginalized upper limit
+
+The primary method (Bayesian marginalized) treats the background rate as an unknown nuisance parameter with a Gamma prior informed by the raw background counts `N_bkg`. This is more rigorous than the classic Kraft et al. (1991) approach, which treats the background as a known fixed quantity. The integral
+
+```
+P(S ≤ S_ul | N_src, N_bkg, alpha) = CL
+```
+
+is solved numerically, where `alpha` is the area/exposure ratio. For Chandra, `xray_uplim` instead calls CIAO's `aprates`, which additionally uses the CALDB PSF fraction and 2-D exposure map.
+
+---
+
 ## Output files
 
 All output is written to `ul_products/` inside the observation directory:

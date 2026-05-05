@@ -69,6 +69,72 @@ def gaussian_psf_weights(shape, cx, cy, fwhm_pix, mask):
     return w
 
 
+def compute_exposure_area_ratio(exp_data, cx_src, cy_src, r_src_pix,
+                                bkg_mode,
+                                r_bkg_inner_pix=None, r_bkg_outer_pix=None,
+                                cx_bkg=None, cy_bkg=None, r_bkg_pix=None):
+    """
+    Exposure-map-weighted source-to-background area ratio (Tier 1).
+
+    Replaces the purely geometric π*r_src² / π*r_bkg² ratio with one
+    that weights by the actual exposure-map pixel values in each region.
+    This accounts for vignetting gradients between the source and
+    background apertures: when the background annulus extends to larger
+    off-axis angles, its effective exposure per pixel is lower than at
+    the source position, so the geometric ratio under-estimates how many
+    background counts to subtract.
+
+    Parameters
+    ----------
+    exp_data   : 2-D float array  — exposure map in seconds
+    cx_src, cy_src : float        — source centre in exposure-map pixels
+    r_src_pix  : float            — source aperture radius in pixels
+    bkg_mode   : str              — 'annulus' or 'manual'
+
+    For annulus mode (bkg_mode == 'annulus'):
+        r_bkg_inner_pix : float  — inner radius of the background annulus
+        r_bkg_outer_pix : float  — outer radius of the background annulus
+
+    For manual mode (bkg_mode == 'manual'):
+        cx_bkg, cy_bkg : float   — background circle centre in exp-map pixels
+        r_bkg_pix      : float   — background circle radius in pixels
+
+    Returns
+    -------
+    area_ratio : float
+        sum(exp_map pixels in source aperture) /
+        sum(exp_map pixels in background region)
+
+    Raises
+    ------
+    RuntimeError
+        If the summed background exposure is zero (background region
+        outside the exposure map or fully vignetted).
+    ValueError
+        If bkg_mode is not 'annulus' or 'manual'.
+    """
+    src_mask    = circle_mask(exp_data.shape, cx_src, cy_src, r_src_pix)
+    exp_sum_src = np.sum(exp_data[src_mask])
+
+    if bkg_mode == 'annulus':
+        outer_mask = circle_mask(exp_data.shape, cx_src, cy_src, r_bkg_outer_pix)
+        inner_mask = circle_mask(exp_data.shape, cx_src, cy_src, r_bkg_inner_pix)
+        bkg_mask   = outer_mask & ~inner_mask
+    elif bkg_mode == 'manual':
+        bkg_mask = circle_mask(exp_data.shape, cx_bkg, cy_bkg, r_bkg_pix)
+    else:
+        raise ValueError(
+            f"bkg_mode must be 'annulus' or 'manual', not '{bkg_mode}'")
+
+    exp_sum_bkg = np.sum(exp_data[bkg_mask])
+    if exp_sum_bkg <= 0:
+        raise RuntimeError(
+            "Zero summed exposure in background region — "
+            "check that the background aperture overlaps the exposure map.")
+
+    return exp_sum_src / exp_sum_bkg
+
+
 def compute_exposure_stats(exp_data, cx, cy, r_src_pix, fwhm_pix):
     """
     Compute all three exposure summary statistics inside the source aperture.

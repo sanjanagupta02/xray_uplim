@@ -29,7 +29,8 @@ from .config   import XMMConfig
 from .io       import locate_files, load_events, load_expmap
 from .aperture import extract_src_bkg_counts, extract_exposure
 from .eef      import compute_xmm_eef
-from ..coords  import parse_coord
+from ..coords  import parse_coord, sky_to_img_pixel
+from ..exposure import compute_exposure_area_ratio
 from ..statistics import net_count_rate, marginalized_upper_limit, gehrels_upper_limit
 
 
@@ -61,9 +62,16 @@ def _compute_ul_results(N_src, B_scaled, t_eff, N_bkg_raw, area_ratio,
         CR_m_ap = marginalized_upper_limit(N_src, N_bkg_raw, area_ratio, t_eff, cl)
         S_g     = gehrels_upper_limit(N_src, B_scaled, cl)
         CR_g_ap = S_g / t_eff
-
-        CR_m_tot = CR_m_ap / eef if (eef is not None and eef > 0) else None
-        CR_g_tot = S_g / (t_eff * eef) if (eef is not None and eef > 0) else None
+        if eef is not None and eef > 0:
+            # Total source rate with EEF folded into the effective exposure.
+            # Equivalent to CR_m_ap / EEF (linear change of variables), but
+            # makes the physical model explicit (expected counts = S_tot × EEF × t).
+            CR_m_tot = marginalized_upper_limit(
+                N_src, N_bkg_raw, area_ratio, t_eff * eef, cl)
+            CR_g_tot = S_g / (t_eff * eef)
+        else:
+            CR_m_tot = None
+            CR_g_tot = None
 
         results.append({
             'cl':                     cl,
@@ -157,9 +165,9 @@ def _print_results_table(N_src, B_scaled, t_eff, N_bkg_raw, area_ratio,
 
     print(divider)
     if eef is not None:
-        print(f"  Marg CR_ap  = marginalized aperture count-rate upper limit (cts/s).")
-        print(f"  Marg CR_tot = EEF-corrected total source rate = CR_ap / EEF.")
-        print(f"  EEF used: {eef:.4f}")
+        print(f"  Marg CR_ap  = marginalized aperture count-rate UL (cts/s).")
+        print(f"  Marg CR_tot = total source rate UL; computed via Bayesian integral")
+        print(f"                with effective exposure t_eff × EEF (EEF={eef:.4f}).")
     else:
         print(f"  Marg CR_ap is the marginalized aperture count-rate upper limit.")
         print(f"  EEF correction skipped (PSF CCF file not found).")
@@ -466,20 +474,52 @@ def _load_and_extract_instrument(instrument, obsid_str, obs_data_dir, cfg,
         print(f"  Bkg circle   : r={cfg.bkg_radius_arcsec:.1f}\"  (manual centre)")
 
     # -- Step 6: source and background counts ---------------------------------
+    # extract_src_bkg_counts prints the geometric ratio for reference; the
+    # exposure-weighted ratio (Tier 1) is computed after loading the expmap.
     print()
-    N_src, N_bkg_raw, area_ratio, cx_evt, cy_evt, pscale_evt = \
+    N_src, N_bkg_raw, area_ratio_geom, cx_evt, cy_evt, pscale_evt = \
         extract_src_bkg_counts(events, evt_hdr, cfg, instrument,
                                bkg_cx_evt=bkg_cx_evt, bkg_cy_evt=bkg_cy_evt)
-    B_scaled = N_bkg_raw * area_ratio
-
-    print(f"  Area ratio   (src / bkg) : {area_ratio:.5f}")
-    print(f"  Scaled bkg   B           : {B_scaled:.3f} cts")
-    print(f"  Net counts   (N_src - B) : {N_src - B_scaled:.3f} cts")
 
     # -- Step 7: effective exposure -------------------------------------------
     print()
     exp_stats, exp_meta, cx_exp, cy_exp = extract_exposure(
         exp_data, exp_hdr, cfg, instrument)
+
+    # -- Tier 1: exposure-weighted area ratio ---------------------------------
+    r_src_exp = cfg.src_radius_arcsec / pscale_exp
+    try:
+        if cfg.bkg_mode == 'annulus':
+            r_inner_exp = (cfg.src_radius_arcsec *
+                           cfg.bkg_inner_factor) / pscale_exp
+            r_outer_exp = cfg.bkg_radius_arcsec / pscale_exp
+            area_ratio = compute_exposure_area_ratio(
+                exp_data, cx_exp, cy_exp, r_src_exp,
+                'annulus',
+                r_bkg_inner_pix=r_inner_exp,
+                r_bkg_outer_pix=r_outer_exp)
+        else:  # manual
+            bkg_coord_exp = parse_coord(cfg.bkg_ra, cfg.bkg_dec)
+            cx_bkg_exp, cy_bkg_exp, _ = sky_to_img_pixel(
+                bkg_coord_exp.ra.deg, bkg_coord_exp.dec.deg, exp_hdr)
+            r_bkg_exp = cfg.bkg_radius_arcsec / pscale_exp
+            area_ratio = compute_exposure_area_ratio(
+                exp_data, cx_exp, cy_exp, r_src_exp,
+                'manual',
+                cx_bkg=cx_bkg_exp, cy_bkg=cy_bkg_exp,
+                r_bkg_pix=r_bkg_exp)
+    except RuntimeError as _exc:
+        warnings.warn(
+            f"Exposure-weighted area ratio failed for {instrument} "
+            f"({_exc}); using geometric ratio.",
+            UserWarning, stacklevel=2)
+        area_ratio = area_ratio_geom
+
+    B_scaled = N_bkg_raw * area_ratio
+
+    print(f"  Area ratio   (exp-weighted) : {area_ratio:.5f}")
+    print(f"  Scaled bkg   B             : {B_scaled:.3f} cts")
+    print(f"  Net counts   (N_src - B)   : {N_src - B_scaled:.3f} cts")
 
     print(f"\n  -- Exposure statistics ------------------------------------------")
     for key, lbl in [('median',       'Median        [RECOMMENDED]        '),
