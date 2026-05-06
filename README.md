@@ -8,13 +8,13 @@ Given a source position and an X-ray observation in which the source was not det
 
 ## Features
 
-- **Four telescopes**: NuSTAR FPMA/B, XMM-Newton EPIC (MOS1, MOS2, pn), Swift XRT, Chandra ACIS
+- **Four telescopes**: NuSTAR FPMA/B, XMM-Newton EPIC (MOS1, MOS2, pn), Swift XRT (PC and WT modes), Chandra ACIS
 - **Bayesian statistics**: marginalized upper limit integrating over background uncertainty; Gehrels confidence intervals for detected sources
 - **Interactive region selector**: visualise and adjust source/background apertures before running
 - **Multi-observation co-adding**: combine several obsids into a single deeper upper limit
-- **Publication-quality plots**: radial profile, exposure map histogram, sky region image (PNG + PDF, 300 dpi)
-- **Desktop GUI** (`xray_uplim`) and **command-line interface** (`xray_uplim-cli`) in one package
-- **Output**: CSV, Excel (.xlsx), and PNG/PDF diagnostic plots
+- **Publication-quality plots**: radial profile, exposure map histogram, sky region image (PDF, vector)
+- **Desktop GUI** (`xray_uplim`) and **command-line interface** (`xray_uplim-cli` or `python run_uplim.py`) in one package
+- **Output**: CSV, Excel (.xlsx), and PDF diagnostic plots
 
 ---
 
@@ -46,16 +46,17 @@ These are installed automatically when you run `pip install .` from the cloned r
 | astropy | ≥ 5.0 | FITS I/O, coordinate conversion |
 | matplotlib | ≥ 3.4 | Plots and interactive region selector |
 | openpyxl | ≥ 3.0 | Excel output |
-| pyyaml | ≥ 6.0 | YAML config files (CLI mode) |
-| PySide6 | ≥ 6.4 | Desktop GUI *(optional — use `pip install ".[gui]"`)* |
+| pyyaml | ≥ 6.0 | YAML config files (xray_uplim-cli) |
+
+PySide6 ≥ 6.4 is an optional dependency installed only by `pip install ".[gui]"`.
 
 ### External astronomy software (telescope-specific)
 
 | Telescope | Software | Required for |
 |-----------|----------|-------------|
-| NuSTAR | [HEASoft](https://heasarc.gsfc.nasa.gov/docs/software/heasoft/) + NuSTAR CALDB | Exposure map creation, EEF via 2D PSF images (CALDB `bcf/psf/`) |
+| NuSTAR | [HEASoft](https://heasarc.gsfc.nasa.gov/docs/software/heasoft/) + NuSTAR CALDB | EEF via 2D PSF images (CALDB `bcf/psf/`) |
 | Swift | None required | Bundled PSF coefficient file included |
-| XMM | [SAS](https://www.cosmos.esa.int/web/xmm-newton/sas) ≥ 20 | Event file processing, CCF/PSF calibration |
+| XMM | [SAS](https://www.cosmos.esa.int/web/xmm-newton/sas) ≥ 20 + CCF files | Event file processing, exposure maps, PSF calibration |
 | Chandra | [CIAO](https://cxc.cfa.harvard.edu/ciao/) ≥ 4.15 | `chandra_repro`, `aprates`, `fluximage` |
 
 ---
@@ -65,13 +66,15 @@ These are installed automatically when you run `pip install .` from the cloned r
 ### 1. Clone the repository
 
 ```bash
-git clone https://github.com/yourusername/nustar_uplim.git
-cd nustar_uplim
+git clone https://github.com/sanjana207298/xray_uplim.git
+cd xray_uplim
 ```
 
 > **Note**: `xray_uplim` is not on PyPI. Installation is from the cloned repository using `pip install .`, which reads `setup.py` and installs all Python dependencies automatically into your active environment.
 
 ### 2. Create a dedicated environment (recommended)
+
+Choose one of the following:
 
 **conda:**
 ```bash
@@ -98,7 +101,7 @@ xray_uplim_env\Scripts\activate.bat
 pip install .
 ```
 
-**With desktop GUI:**
+**With desktop GUI (adds PySide6):**
 ```bash
 pip install ".[gui]"
 ```
@@ -108,7 +111,7 @@ pip install ".[gui]"
 pip install -e ".[gui]"
 ```
 
-> **macOS + conda note**: If you see `qt.qpa.plugin: Could not find the Qt platform plugin 'cocoa'` when launching the GUI, this is a known issue with pip-installed PySide6 in conda environments. `xray_uplim` detects and fixes this automatically — no manual action needed.
+Use the editable install if you plan to modify the source — changes take effect immediately without reinstalling.
 
 ---
 
@@ -236,6 +239,14 @@ Results and diagnostic plots appear in the **Results** tab after the run complet
 
 ### Command-line interface
 
+The primary way to run from the command line is to edit the `CONFIG` block in `run_uplim.py` and run:
+
+```bash
+python run_uplim.py
+```
+
+Alternatively, use the YAML-based CLI:
+
 ```bash
 # Print a template config file
 xray_uplim-cli --template > config.yaml
@@ -247,6 +258,8 @@ xray_uplim-cli config.yaml
 xray_uplim-cli config.json
 ```
 
+Both interfaces accept identical parameter names. See [Configuration Reference](Configuration-Reference) for all options.
+
 ---
 
 ## Data directory structure
@@ -257,13 +270,11 @@ xray_uplim-cli config.json
 ```
 base_path/
 └── {obsid}/
-    ├── event_cl/
-    │   ├── nu{obsid}A01_cl.evt     ← cleaned FPMA event file
-    │   └── nu{obsid}B01_cl.evt     ← cleaned FPMB event file
-    └── hk/
-        └── nu{obsid}A_mast.fits    ← housekeeping (exposure metadata)
+    └── event_cl/
+        ├── nu{obsid}A01_cl.evt     ← cleaned FPMA event file
+        └── nu{obsid}B01_cl.evt     ← cleaned FPMB event file
 ```
-Output → directory specified by `output_dir` in the config (or GUI output field)
+Output → `{base_path}/{obsid}/ul_products/`
 
 ### Swift XRT
 ```
@@ -271,21 +282,23 @@ data_dir/
 └── {obsid}/
     └── xrt/
         ├── event/
-        │   └── sw{obsid}xwtw2po_cl.evt    ← cleaned PC-mode event file
+        │   └── sw{obsid}x*_cl.evt      ← cleaned event file (PC or WT mode)
         └── expmap/
-            └── sw{obsid}xpc_ex.img        ← exposure map
+            └── sw{obsid}x*_ex.img      ← exposure map
 ```
-Output → directory specified by `output_dir` in the config (or GUI output field)
+Output → `{data_dir}/{obsid}/ul_products/`
 
 ### XMM-Newton EPIC
 ```
 data_dir/                 ← ODF working directory (after running emproc / epproc)
-├── *MIEVLI*.FTZ          ← MOS1 event list
-├── *M2EVLI*.FTZ          ← MOS2 event list
-├── *PNEVLI*.FTZ          ← pn event list
-└── *EXPMAP*.FTZ          ← exposure maps (from eexpmap)
+├── *EMOS1*ImagingEvts.ds     ← MOS1 event file
+├── *EMOS2*ImagingEvts.ds     ← MOS2 event file
+├── *EPN*ImagingEvts.ds       ← pn event file
+├── mos1_expmap.fits           ← MOS1 exposure map (from eexpmap)
+├── mos2_expmap.fits           ← MOS2 exposure map
+└── pn_expmap.fits             ← pn exposure map
 ```
-Output → directory specified by `output_dir` in the config (or GUI output field)
+Output → `{data_dir}/ul_products/`
 
 ### Chandra ACIS
 ```
@@ -296,7 +309,7 @@ base_path/
     └── repro/                               ← created automatically by chandra_repro
         └── acisf{obsid}_repro_evt2.fits
 ```
-Output → directory specified by `output_dir` in the config (or GUI output field)
+Output → `{base_path}/{obsid}/ul_products/`
 
 ---
 
@@ -347,16 +360,16 @@ is solved numerically, where `alpha` is the area/exposure ratio. For Chandra, `x
 
 ## Output files
 
-All output is written to the directory specified by `output_dir` in the configuration (or the output field in the GUI):
+All output is written to `ul_products/` inside the observation directory:
 
 | File | Description |
 |------|-------------|
 | `{tel}_uplim_{obsid}.csv` | Results table: counts, exposure, EEF, upper limits at each CL |
 | `{tel}_uplim_{obsid}.xlsx` | Same in Excel format |
-| `radial_{label}_{band}keV.png` | Log-scale radial surface-density profile |
-| `expmap_hist_{label}.png` | Exposure-map pixel distribution in aperture |
-| `regions_{label}_{band}keV.png` | Sky image with source and background apertures (300 dpi) |
-| `regions_{label}_{band}keV.pdf` | Vector version of sky image (for papers) |
+| `radial_{label}_{band}keV.pdf` | Log-scale radial surface-density profile |
+| `expmap_hist_{label}.pdf` | Exposure-map pixel distribution in aperture |
+| `regions_{label}_{band}keV.pdf` | Sky image with source and background apertures (vector, for papers) |
+| `chandra_regions_{obsid}_{band}keV.pdf` | Sky image for Chandra (PDF) |
 
 ---
 
