@@ -532,12 +532,23 @@ def combine_modules(results_list, cfg, obsid_label=None):
     N_total     = sum(r['N_src']     for r in results_list)
     B_total     = sum(r['B_scaled']  for r in results_list)
     N_bkg_total = sum(r['N_bkg_raw'] for r in results_list)
-    area_ratio  = results_list[0]['area_ratio']
+    # Effective area ratio: α_eff = B_total / N_bkg_total
+    # = (α_A·N_bkg_A + α_B·N_bkg_B) / (N_bkg_A + N_bkg_B)
+    # Guarantees α_eff × N_bkg_total = B_total exactly, even when the two
+    # modules have slightly different area ratios (different off-axis vignetting).
+    if N_bkg_total > 0:
+        area_ratio = B_total / N_bkg_total
+    else:
+        area_ratio = results_list[0]['area_ratio']   # fallback: no bkg counts
     t_vals      = [r['t_eff_s'] for r in results_list]
     t_comb      = float(np.sum(t_vals))
 
     print(f"  Combined N_src    : {N_total}")
     print(f"  Combined B_scaled : {B_total:.3f} cts")
+    for r in results_list:
+        print(f"  Area ratio FPM-{r['module']}       : {r['area_ratio']:.5f}")
+    print(f"  Area ratio (eff)  : {area_ratio:.5f}  "
+          f"[= B_total / N_bkg_total; consistent with B_scaled]")
     for r in results_list:
         print(f"  t_eff FPM-{r['module']}       : {r['t_eff_s']/1e3:.3f} ks")
     print(f"  t_eff (combined)  : {t_comb/1e3:.3f} ks  "
