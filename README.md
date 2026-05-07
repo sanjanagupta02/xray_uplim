@@ -12,7 +12,7 @@ Given a source position and an X-ray observation in which the source was not det
 |----------|--------|-------|-----|---------|
 | macOS    | ✓ | ✓ | ✓ | ✓ |
 | Linux    | ✓ | ✓ | ✓ | ✓ |
-| Windows  | ✓ | ✓ | Limited — SAS not officially supported | ✗ — CIAO not available |
+| Windows  | ✓ | ✓ | Limited (SAS not officially supported) | ✗ (CIAO not available) |
 
 > **Windows users**: NuSTAR and Swift pipelines work natively. XMM requires SAS which does not have an official Windows build. Chandra requires CIAO which is Linux/macOS only.
 
