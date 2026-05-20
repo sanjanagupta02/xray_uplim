@@ -550,7 +550,7 @@ def process_instrument(instrument: str, cfg: XMMConfig):
         net_counts, t_eff_s, exp_stats, ul, energy, eef_info, csv_rows
     """
     obsid_str    = cfg.obsids[0]
-    obs_data_dir = cfg.data_dir  # single-obs: data_dir IS the obs dir
+    obs_data_dir = os.path.join(cfg.data_dir, obsid_str, 'ODF')
 
     raw = _load_and_extract_instrument(instrument, obsid_str, obs_data_dir,
                                         cfg, run_gui=cfg.use_gui)
@@ -615,7 +615,7 @@ def process_observations(cfg: XMMConfig):
     obsid_label = cfg.obsid if isinstance(cfg.obsid, str) else '+'.join(obsids)
 
     # Output dir
-    out_dir = os.path.join(cfg.data_dir, "ul_products")
+    out_dir = os.path.join(cfg.data_dir, obsids[0], "ul_products")
 
     # Save original aperture settings for gui_per_obs
     _orig_aperture = {k: getattr(cfg, k) for k in (
@@ -644,9 +644,7 @@ def process_observations(cfg: XMMConfig):
 
     # -- Per-obs data directory -----------------------------------------------
     def _obs_data_dir(obsid_str):
-        if n_obs == 1:
-            return cfg.data_dir
-        return os.path.join(cfg.data_dir, obsid_str)
+        return os.path.join(cfg.data_dir, obsid_str, 'ODF')
 
     # -- Load and extract all (obs, instrument) pairs -------------------------
     # per_obs_raw[obsid_str][instrument] = dict from _load_and_extract_instrument
@@ -864,7 +862,9 @@ def run_uplim(data_dir, obsid, ra, dec, **kwargs):
 
     Parameters
     ----------
-    data_dir : str           — ODF working directory (epproc/emproc output)
+    data_dir : str           — parent directory containing obsid subdirectories
+                               (each obsid dir must contain an ODF/ subfolder
+                               with the SAS-processed event files and exposure maps)
     obsid    : str or list   — XMM observation ID(s).  Pass a list to co-add.
     ra       : str or float  — source RA  ("HH:MM:SS" or decimal degrees)
     dec      : str or float  — source Dec ("±DD:MM:SS" or decimal degrees)

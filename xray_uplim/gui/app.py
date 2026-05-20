@@ -563,8 +563,8 @@ class XMMForm(_BaseForm):
         super().__init__()
 
         box, lay = _group('Observation')
-        self._data_dir = _path_row(lay, 'ODF directory', '',
-                                   '/path/to/XMM/ODF/')
+        self._data_dir = _path_row(lay, 'Data directory', '',
+                                   '/path/to/XMM/object/')
         self._obsid    = _line('', '0881990901  or  id1, id2 to co-add')
         self._psf_dir  = _path_row(lay, 'SAS CCF/PSF directory', '',
                                    'Leave empty — $SAS_CCFPATH used automatically',
