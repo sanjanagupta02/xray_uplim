@@ -15,8 +15,9 @@ import sys
 import tempfile
 from collections import OrderedDict
 
-from PySide6.QtCore    import Qt, QProcess, QSize
-from PySide6.QtGui     import QFont, QColor, QTextCursor, QPixmap
+from PySide6.QtCore    import Qt, QProcess, QSize, Signal, QEvent
+from PySide6.QtGui     import QFont, QColor, QTextCursor, QPixmap, \
+                               QStandardItemModel, QStandardItem
 
 try:
     from PySide6.QtPdf import QPdfDocument
@@ -74,6 +75,28 @@ CHANDRA_BANDS = OrderedDict([
     ('ultrasoft', 'ultrasoft  ·  0.3–1 keV'),
 ])
 CHANDRA_ELIM = (0.1, 10.0)
+
+
+# =============================================================================
+# ObsID auto-detection helpers
+# =============================================================================
+
+def _scan_obsids(data_dir, validator):
+    """Return sorted list of subdirectory names in data_dir that pass validator."""
+    if not os.path.isdir(data_dir):
+        return []
+    return sorted(
+        name for name in os.listdir(data_dir)
+        if os.path.isdir(os.path.join(data_dir, name))
+        and validator(os.path.join(data_dir, name))
+    )
+
+def _valid_nustar(p):  return os.path.isdir(os.path.join(p, 'event_cl'))
+def _valid_swift(p):   return os.path.isdir(os.path.join(p, 'xrt', 'event'))
+def _valid_xmm(p):
+    odf = os.path.join(p, 'ODF')
+    return os.path.isdir(odf) and bool(glob.glob(os.path.join(odf, '*ImagingEvts.ds')))
+def _valid_chandra(p): return os.path.isdir(os.path.join(p, 'primary'))
 
 
 # =============================================================================
@@ -137,6 +160,85 @@ def _path_row(form: QFormLayout, label: str, default: str = '',
     h.addWidget(btn)
     form.addRow(label, row)
     return edit
+
+
+class _CheckableComboBox(QComboBox):
+    """
+    QComboBox where every item has a checkbox.
+    The popup stays open while the user checks / unchecks items;
+    it closes only when the user clicks outside or presses Escape.
+    """
+    selectionChanged = Signal(list)   # emits list[str] of checked texts
+
+    def __init__(self, placeholder='No ObsIDs detected — set data directory first',
+                 parent=None):
+        super().__init__(parent)
+        self.setEditable(True)
+        self.lineEdit().setReadOnly(True)
+        self.lineEdit().setPlaceholderText(placeholder)
+        self._placeholder = placeholder
+
+        self._model = QStandardItemModel(self)
+        self.setModel(self._model)
+        self._model.itemChanged.connect(self._on_item_changed)
+        self._updating = False
+
+        # Match the width of the path-row browse fields
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.setMinimumWidth(260)
+
+        # Intercept mouse clicks so popup stays open when checking items
+        self.view().viewport().installEventFilter(self)
+
+    def populate(self, items):
+        """Replace all items; all checked by default."""
+        self._updating = True
+        self._model.clear()
+        for text in items:                          # already sorted by caller
+            item = QStandardItem(text)
+            item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsUserCheckable)
+            item.setCheckState(Qt.Checked)
+            self._model.appendRow(item)
+        self._updating = False
+        self._refresh_text()
+        self.selectionChanged.emit(self.checked_items())
+
+    def clear_items(self):
+        self._model.clear()
+        self.lineEdit().clear()
+
+    # ------------------------------------------------------------------
+    def eventFilter(self, obj, event):
+        """Swallow mouse-release on checkbox items so popup does not close."""
+        if (obj is self.view().viewport() and
+                event.type() == QEvent.MouseButtonRelease):
+            idx = self.view().indexAt(event.pos())
+            if idx.isValid():
+                item = self._model.itemFromIndex(idx)
+                if item and item.isCheckable():
+                    new = (Qt.Unchecked if item.checkState() == Qt.Checked
+                           else Qt.Checked)
+                    item.setCheckState(new)
+                    return True     # swallow — keep popup open
+        return super().eventFilter(obj, event)
+
+    # ------------------------------------------------------------------
+    def _on_item_changed(self, item):
+        if not self._updating:
+            self._refresh_text()
+            self.selectionChanged.emit(self.checked_items())
+
+    def _refresh_text(self):
+        checked = self.checked_items()
+        self.lineEdit().setText(', '.join(checked) if checked else '')
+
+    def checked_items(self):
+        return [self._model.item(i).text()
+                for i in range(self._model.rowCount())
+                if self._model.item(i).checkState() == Qt.Checked]
+
+    def has_selection(self):
+        return bool(self.checked_items())
 
 
 def _energy_band_widget(bands_dict: OrderedDict, default: str,
@@ -418,19 +520,35 @@ class _BaseForm(QWidget):
     def is_ready(self) -> bool:
         """True when the minimum required fields are filled."""
         obsid_w = getattr(self, '_obsid', None)
-        obsid   = obsid_w.text().strip() if obsid_w else 'ok'
-        return bool(self.data_path() and obsid and
+        if isinstance(obsid_w, _CheckableComboBox):
+            obsid_ok = obsid_w.has_selection()
+        else:
+            obsid_ok = bool(obsid_w.text().strip()) if obsid_w else True
+        return bool(self.data_path() and obsid_ok and
                     self._ra.text().strip() and self._dec.text().strip())
 
     def connect_change(self, callback):
         """Connect all key fields to callback so run-button can be toggled."""
         obsid_w = getattr(self, '_obsid', None)
-        if obsid_w: obsid_w.textChanged.connect(callback)
+        if isinstance(obsid_w, _CheckableComboBox):
+            obsid_w.selectionChanged.connect(lambda _: callback())
+        elif obsid_w:
+            obsid_w.textChanged.connect(callback)
         for attr in ('_base_path', '_data_dir'):
             w = getattr(self, attr, None)
             if w: w.textChanged.connect(callback)
         self._ra.textChanged.connect(callback)
         self._dec.textChanged.connect(callback)
+
+    def _setup_obsid_scan(self, dir_widget, validator):
+        """Auto-populate self._obsid when dir_widget path changes."""
+        def _scan(path):
+            obsids = _scan_obsids(path.strip(), validator)
+            if obsids:
+                self._obsid.populate(obsids)
+            else:
+                self._obsid.clear_items()
+        dir_widget.textChanged.connect(_scan)
 
 
 # ---------------------------------------------------------------------------
@@ -445,10 +563,11 @@ class NuSTARForm(_BaseForm):
         box, lay = _group('Observation')
         self._base_path = _path_row(lay, 'Data directory', '',
                                     '/path/to/NuSTAR/data/')
-        self._obsid     = _line('', '80802504004  or  id1, id2 to co-add')
+        self._obsid     = _CheckableComboBox()
         self._caldb     = _path_row(lay, 'CALDB directory', '',
                                     'Leave empty to use $CALDB env variable')
         lay.addRow('ObsID(s)', self._obsid)
+        self._setup_obsid_scan(self._base_path, _valid_nustar)
         self._main_layout.addWidget(box)
 
         self._add_source_position()
@@ -487,7 +606,7 @@ class NuSTARForm(_BaseForm):
         self._main_layout.addStretch()
 
     def get_config(self) -> dict:
-        obsid = [o.strip() for o in self._obsid.text().split(',') if o.strip()]
+        obsid = self._obsid.checked_items()
         if len(obsid) == 1: obsid = obsid[0]
         modules = (['A'] if self._mod_a.isChecked() else []) + \
                   (['B'] if self._mod_b.isChecked() else [])
@@ -514,8 +633,9 @@ class SwiftForm(_BaseForm):
         box, lay = _group('Observation')
         self._data_dir = _path_row(lay, 'Data directory', '',
                                    '/path/to/Swift/data/')
-        self._obsid    = _line('', '03000397004  or  id1, id2 to co-add')
+        self._obsid    = _CheckableComboBox()
         lay.addRow('ObsID(s)', self._obsid)
+        self._setup_obsid_scan(self._data_dir, _valid_swift)
         self._main_layout.addWidget(box)
 
         self._add_source_position()
@@ -542,7 +662,7 @@ class SwiftForm(_BaseForm):
         self._main_layout.addStretch()
 
     def get_config(self) -> dict:
-        obsid = [o.strip() for o in self._obsid.text().split(',') if o.strip()]
+        obsid = self._obsid.checked_items()
         if len(obsid) == 1: obsid = obsid[0]
         cfg = self._base_config()
         cfg.update({
@@ -565,13 +685,14 @@ class XMMForm(_BaseForm):
         box, lay = _group('Observation')
         self._data_dir = _path_row(lay, 'Data directory', '',
                                    '/path/to/XMM/object/')
-        self._obsid    = _line('', '0881990901  or  id1, id2 to co-add')
+        self._obsid    = _CheckableComboBox()
         self._psf_dir  = _path_row(lay, 'SAS CCF/PSF directory', '',
                                    'Leave empty — $SAS_CCFPATH used automatically',
                                    tooltip='Directory containing XRT?_XPSF_*.CCF files.\n'
                                            'Leave empty if SAS is initialised in your shell\n'
                                            '(sasinit / conda activate sas).')
         lay.addRow('ObsID(s)', self._obsid)
+        self._setup_obsid_scan(self._data_dir, _valid_xmm)
         self._main_layout.addWidget(box)
 
         self._add_source_position()
@@ -605,7 +726,7 @@ class XMMForm(_BaseForm):
         self._main_layout.addStretch()
 
     def get_config(self) -> dict:
-        obsid = [o.strip() for o in self._obsid.text().split(',') if o.strip()]
+        obsid = self._obsid.checked_items()
         if len(obsid) == 1: obsid = obsid[0]
         instruments = ((['MOS1'] if self._mos1.isChecked() else []) +
                        (['MOS2'] if self._mos2.isChecked() else []) +
@@ -640,7 +761,7 @@ class ChandraForm(_BaseForm):
         box, lay = _group('Observation')
         self._base_path   = _path_row(lay, 'Data directory', '',
                                       '/path/to/Chandra/data/')
-        self._obsid       = _line('', '26631  or  id1, id2 to co-add')
+        self._obsid       = _CheckableComboBox()
         self._ciao_prefix = _path_row(
             lay, 'CIAO prefix', '',
             'e.g. /Applications/ciao-4.18  (leave empty if CIAO is active in shell)',
@@ -649,6 +770,7 @@ class ChandraForm(_BaseForm):
                     'and /Applications/ciao-4.XX (macOS standalone installer).\n'
                     'Only set this if auto-detection fails.')
         lay.addRow('ObsID(s)', self._obsid)
+        self._setup_obsid_scan(self._base_path, _valid_chandra)
         self._main_layout.addWidget(box)
 
         self._add_source_position()
@@ -708,7 +830,7 @@ class ChandraForm(_BaseForm):
         self._main_layout.addStretch()
 
     def get_config(self) -> dict:
-        obsid = [o.strip() for o in self._obsid.text().split(',') if o.strip()]
+        obsid = self._obsid.checked_items()
         if len(obsid) == 1: obsid = obsid[0]
         return {
             'base_path':         self._base_path.text().strip(),
