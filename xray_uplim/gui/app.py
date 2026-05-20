@@ -1498,30 +1498,34 @@ class MainWindow(QMainWindow):
             if item.widget():
                 item.widget().deleteLater()
 
-        # Find ul_products/ in both base_path/ and base_path/*/
+        # Find ul_products/ at depth 0, 1, or 2 under run_path.
+        # NuSTAR / Swift / Chandra: <root>/<obsid>/ul_products/   (depth 1)
+        # XMM:  plots go to <data_dir>/<obsid>/ODF/ul_products/   (depth 2)
+        #       CSV goes to <data_dir>/<obsid>/ul_products/        (depth 1 — no PDFs)
         candidates = (
             glob.glob(os.path.join(self._run_path, 'ul_products')) +
-            glob.glob(os.path.join(self._run_path, '*', 'ul_products'))
+            glob.glob(os.path.join(self._run_path, '*', 'ul_products')) +
+            glob.glob(os.path.join(self._run_path, '*', '*', 'ul_products'))
         )
-        candidates = [d for d in candidates if os.path.isdir(d)]
+        # Keep only dirs that actually contain at least one PDF
+        candidates = [
+            d for d in candidates
+            if os.path.isdir(d) and glob.glob(os.path.join(d, '*.pdf'))
+        ]
 
-        if not candidates:
-            lbl = QLabel(
-                f'No ul_products/ directory found under:\n  {self._run_path}')
-            lbl.setStyleSheet('color:#aaa; padding:20px;')
-            self._results_layout.addWidget(lbl)
-            self._results_layout.addStretch()
-            self._tabs.setCurrentIndex(1)
-            return
-
+        # Collect all PDFs from the discovered directories (already filtered)
         pdfs = sorted(
             p for d in candidates
             for p in glob.glob(os.path.join(d, '*.pdf'))
         )
 
         if not pdfs:
-            lbl = QLabel('Pipeline ran but no plot files found in ul_products/.')
+            lbl = QLabel(
+                f'Pipeline ran but no plot files (.pdf) found under:\n'
+                f'  {self._run_path}\n\n'
+                f'(Searched at depths 0–2 for ul_products/ directories.)')
             lbl.setStyleSheet('color:#aaa; padding:20px;')
+            lbl.setWordWrap(True)
             self._results_layout.addWidget(lbl)
             self._results_layout.addStretch()
             self._tabs.setCurrentIndex(1)
