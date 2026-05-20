@@ -2,7 +2,9 @@
 
 **Unified X-ray non-detection upper limit calculator** for NuSTAR, XMM-Newton, Swift XRT, and Chandra ACIS.
 
-Given a source position and an X-ray observation in which the source was not detected, `xray_uplim` computes a Bayesian upper limit on the source count rate and flux at one or more confidence levels. It handles multi-observation co-adding, aperture photometry, encircled energy fraction (EEF) correction, and diagnostic plot generation automatically.
+Given a source position and an X-ray observation in which the source was not detected, `xray_uplim` computes a Bayesian upper limit on the source count rate at one or more confidence levels. It handles multi-observation co-adding, aperture photometry, encircled energy fraction (EEF) correction, and diagnostic plot generation automatically.
+
+Optionally, count-rate upper limits can be converted to **absorbed and unabsorbed flux upper limits** (erg cm⁻² s⁻¹) and, if a source redshift is provided, to **luminosity upper limits** (erg s⁻¹). Flux conversion is performed via [NASA WebPIMMS](https://heasarc.gsfc.nasa.gov/cgi-bin/Tools/w3pimms/w3pimms.pl) using a user-specified spectral model. Galactic N_H and source redshift can be fetched automatically from online catalogues.
 
 ---
 
@@ -37,6 +39,8 @@ These are installed automatically when you run `pip install .` from the cloned r
 | pyyaml | ≥ 6.0 | 
 
 PySide6 ≥ 6.4 is an optional dependency installed only by `pip install ".[gui]"`.
+
+> **Internet access** is required for the optional flux/luminosity conversion: count rates are sent to NASA WebPIMMS, and Galactic N_H / source redshift can be fetched automatically from HEASARC and NED/Sesame. All network calls are non-blocking : if a connection fails the pipeline still completes and writes count-rate results.
 
 ### External astronomy software (telescope-specific)
 
@@ -309,12 +313,11 @@ All output is written to `ul_products/` inside the observation directory:
 
 | File | Description |
 |------|-------------|
-| `{tel}_uplim_{obsid}.csv` | Results table: counts, exposure, EEF, upper limits at each CL |
+| `{tel}_uplim_{obsid}.csv` | Results table: counts, exposure, EEF, count-rate upper limits at each CL; absorbed flux, unabsorbed flux, and luminosity columns are added when flux conversion is enabled |
 | `{tel}_uplim_{obsid}.xlsx` | Same in Excel format |
 | `radial_{label}_{band}keV.pdf` | Log-scale radial surface-density profile |
 | `expmap_hist_{label}.pdf` | Exposure-map pixel distribution in aperture |
-| `regions_{label}_{band}keV.pdf` | Sky image with source and background apertures (vector, for papers) |
-| `chandra_regions_{obsid}_{band}keV.pdf` | Sky image for Chandra (PDF) |
+| `regions_{label}_{band}keV.pdf` | Sky image with source and background apertures |
 
 ---
 
