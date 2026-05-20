@@ -350,16 +350,17 @@ def _cl_widget() -> tuple:
 
 class _NameResolverThread(QThread):
     """
-    Resolves a source name to RA/Dec using the CDS Sesame service
-    (https://cdsweb.u-strasbg.fr/cgi-bin/nph-sesame).
+    Resolves a source name to RA/Dec (and optionally redshift) using the
+    CDS Sesame service (https://cdsweb.u-strasbg.fr/cgi-bin/nph-sesame).
 
     Sesame is the same lightweight endpoint used by Aladin, ESASky, and most
     other astronomy tools — typically responds in under one second.  It queries
     SIMBAD, NED, and VizieR in sequence and returns the first match.
     No extra dependencies: uses only Python's built-in urllib and xml modules.
     """
-    resolved = Signal(float, float, str)   # ra_deg, dec_deg, catalogue_name
-    failed   = Signal(str)                 # error message
+    resolved   = Signal(float, float, str)   # ra_deg, dec_deg, catalogue_name
+    z_resolved = Signal(float)               # redshift (if found in Sesame response)
+    failed     = Signal(str)                 # error message
 
     def __init__(self, name, parent=None):
         super().__init__(parent)
@@ -391,12 +392,71 @@ class _NameResolverThread(QThread):
                     else:                src = 'Sesame'
                     self.resolved.emit(float(ra_el.text),
                                        float(dec_el.text), src)
+                    # Also try to parse redshift from <z><v>VALUE</v></z>
+                    z_el = resolver.find('z')
+                    if z_el is None:
+                        z_el = resolver.find('.//z')
+                    if z_el is not None:
+                        v_el = z_el.find('v')
+                        if v_el is not None and v_el.text:
+                            try:
+                                self.z_resolved.emit(float(v_el.text))
+                            except ValueError:
+                                pass
                     return
         except Exception as exc:
             self.failed.emit(f'Failed to parse Sesame response: {exc}')
             return
 
         self.failed.emit(f"'{self._name}' not found in SIMBAD or NED.")
+
+
+# ---------------------------------------------------------------------------
+# NH auto-fetch thread
+# ---------------------------------------------------------------------------
+
+class _NHFetchThread(QThread):
+    """Fetch Galactic N_H from HEASARC HI4PI in a background thread."""
+    nh_ready = Signal(float)   # N_H in cm^-2
+    failed   = Signal(str)
+
+    def __init__(self, ra_deg, dec_deg, parent=None):
+        super().__init__(parent)
+        self._ra  = ra_deg
+        self._dec = dec_deg
+
+    def run(self):
+        try:
+            from ..flux_conversion import fetch_nh
+            nh = fetch_nh(self._ra, self._dec)
+            if nh is not None:
+                self.nh_ready.emit(float(nh))
+            else:
+                self.failed.emit('Could not parse N_H from HEASARC response.')
+        except Exception as exc:
+            self.failed.emit(str(exc))
+
+
+class _ZFetchThread(QThread):
+    """Fetch redshift from NED in a background thread."""
+    z_ready = Signal(float)
+    failed  = Signal(str)
+
+    def __init__(self, src_name, parent=None):
+        super().__init__(parent)
+        self._name = src_name
+
+    def run(self):
+        try:
+            from ..flux_conversion import fetch_redshift_ned
+            z = fetch_redshift_ned(self._name)
+            if z is not None:
+                self.z_ready.emit(float(z))
+            else:
+                self.failed.emit(
+                    f"Redshift not found in NED for '{self._name}'.")
+        except Exception as exc:
+            self.failed.emit(str(exc))
 
 
 # =============================================================================
@@ -442,6 +502,7 @@ class _BaseForm(QWidget):
         lay.addRow('Dec', self._dec)
         self._main_layout.addWidget(box)
         self._resolver_thread = None
+        self._resolved_z = None   # cached redshift from Sesame, if available
 
     # --- Name resolver slots -------------------------------------------------
 
@@ -453,6 +514,7 @@ class _BaseForm(QWidget):
         self._resolve_btn.setEnabled(False)
         self._resolver_thread = _NameResolverThread(name, self)
         self._resolver_thread.resolved.connect(self._on_resolved)
+        self._resolver_thread.z_resolved.connect(self._on_z_resolved_from_sesame)
         self._resolver_thread.failed.connect(self._on_resolve_failed)
         self._resolver_thread.start()
 
@@ -462,6 +524,10 @@ class _BaseForm(QWidget):
         self._resolve_btn.setText(f'✓ {catalogue}')
         self._resolve_btn.setEnabled(True)
         QTimer.singleShot(2500, lambda: self._resolve_btn.setText('Resolve →'))
+
+    def _on_z_resolved_from_sesame(self, z):
+        """Store redshift from Sesame resolution for later use by flux section."""
+        self._resolved_z = z
 
     def _on_resolve_failed(self, msg):
         QMessageBox.warning(self, 'Name not resolved', msg)
@@ -582,10 +648,257 @@ class _BaseForm(QWidget):
         self._exp_stat.currentTextChanged.connect(_toggle_psf)
         _toggle_psf(self._exp_stat.currentText())   # correct initial state
 
+    def _add_flux_conversion(self):
+        """
+        Add a collapsible 'Flux / Luminosity Conversion' group box.
+        Unchecked (collapsed) by default.
+        """
+        box = QGroupBox('Flux / Luminosity Conversion  (optional)')
+        box.setStyleSheet("QGroupBox { font-weight: bold; }")
+        box.setCheckable(True)
+        box.setChecked(False)
+        lay = QFormLayout()
+        lay.setHorizontalSpacing(12)
+        lay.setVerticalSpacing(6)
+        box.setLayout(lay)
+
+        # Row 1: N_H
+        nh_row = QWidget()
+        nh_lay = QHBoxLayout(nh_row)
+        nh_lay.setContentsMargins(0, 0, 0, 0)
+        nh_lay.setSpacing(4)
+        self._nh_edit = _line('', 'e.g. 3e20', 'Galactic N_H in cm^-2')
+        self._nh_fetch_btn = QPushButton('Auto-fetch')
+        self._nh_fetch_btn.setMaximumWidth(85)
+        self._nh_fetch_btn.setToolTip(
+            'Fetch Galactic N_H from HEASARC HI4PI tool (requires RA/Dec).')
+        self._nh_fetch_btn.clicked.connect(self._fetch_nh)
+        nh_lay.addWidget(self._nh_edit)
+        nh_lay.addWidget(self._nh_fetch_btn)
+        lay.addRow('Nₕ (cm⁻²)', nh_row)
+
+        # Row 2: Spectral model
+        self._flux_model = _combo(
+            ['Power law', 'Blackbody', 'Bremsstrahlung', 'APEC'],
+            'Power law',
+            'Spectral model used for WebPIMMS count-rate to flux conversion.')
+        lay.addRow('Spectral model', self._flux_model)
+
+        # Row 3a: Photon index (power law)
+        self._photon_index = _spin(2.0, 0.1, 5.0, 0.1, 2,
+                                    'Photon index Γ for the power law model.')
+        self._photon_index_lbl = QLabel('Photon index (Γ)')
+        lay.addRow(self._photon_index_lbl, self._photon_index)
+
+        # Row 3b: Temperature kT (blackbody / bremss / apec)
+        self._temperature_kev = _spin(1.0, 0.01, 100.0, 0.1, 3,
+                                       'Temperature kT in keV.')
+        self._temperature_lbl = QLabel('Temperature kT (keV)')
+        lay.addRow(self._temperature_lbl, self._temperature_kev)
+
+        # Row 4: Abundance (apec only)
+        self._abundance = _combo(
+            ['1.0', '0.8', '0.6', '0.4', '0.2'], '1.0',
+            'Solar abundance (APEC model only).')
+        self._abundance_lbl = QLabel('Abundance (solar)')
+        lay.addRow(self._abundance_lbl, self._abundance)
+
+        # Row 5: Redshift
+        z_row = QWidget()
+        z_lay = QHBoxLayout(z_row)
+        z_lay.setContentsMargins(0, 0, 0, 0)
+        z_lay.setSpacing(4)
+        self._z_edit = _line('', 'e.g. 0.0015',
+                              'Source redshift z for luminosity calculation.')
+        self._z_fetch_btn = QPushButton('Auto-fetch')
+        self._z_fetch_btn.setMaximumWidth(85)
+        self._z_fetch_btn.setToolTip(
+            'Use redshift from Sesame name resolver (if available), '
+            'or query NED with the source name.')
+        self._z_fetch_btn.clicked.connect(self._fetch_z)
+        z_lay.addWidget(self._z_edit)
+        z_lay.addWidget(self._z_fetch_btn)
+        lay.addRow('Redshift z', z_row)
+
+        # Row 6: Cosmology
+        cosmo_row = QWidget()
+        cosmo_lay = QHBoxLayout(cosmo_row)
+        cosmo_lay.setContentsMargins(0, 0, 0, 0)
+        cosmo_lay.setSpacing(4)
+        self._cosmology = _combo(['Planck18', 'WMAP9', 'Custom'], 'Planck18')
+        cosmo_lay.addWidget(self._cosmology)
+        # Custom H0 / Omega_M fields (hidden by default)
+        self._h0_spin = _spin(67.4, 50.0, 100.0, 0.1, 1,
+                               'H₀ in km/s/Mpc (custom cosmology only)')
+        self._h0_spin.setPrefix('H₀: ')
+        self._h0_spin.setSuffix(' km/s/Mpc')
+        self._h0_spin.setMaximumWidth(160)
+        self._omegam_spin = _spin(0.315, 0.1, 0.9, 0.005, 3,
+                                   'Ω_M (custom cosmology only)')
+        self._omegam_spin.setPrefix('Ω_M: ')
+        self._omegam_spin.setMaximumWidth(110)
+        for w in (self._h0_spin, self._omegam_spin):
+            w.hide()
+            cosmo_lay.addWidget(w)
+        cosmo_lay.addStretch()
+        lay.addRow('Cosmology', cosmo_row)
+
+        # Show/hide cosmology custom fields
+        def _toggle_cosmo(text):
+            custom = (text == 'Custom')
+            self._h0_spin.setVisible(custom)
+            self._omegam_spin.setVisible(custom)
+        self._cosmology.currentTextChanged.connect(_toggle_cosmo)
+
+        # Show/hide spectral-param rows based on model selection
+        def _toggle_model(text):
+            is_pl    = (text == 'Power law')
+            is_kt    = (text in ('Blackbody', 'Bremsstrahlung', 'APEC'))
+            is_apec  = (text == 'APEC')
+            self._photon_index.setVisible(is_pl)
+            self._photon_index_lbl.setVisible(is_pl)
+            self._temperature_kev.setVisible(is_kt)
+            self._temperature_lbl.setVisible(is_kt)
+            self._abundance.setVisible(is_apec)
+            self._abundance_lbl.setVisible(is_apec)
+        self._flux_model.currentTextChanged.connect(_toggle_model)
+        _toggle_model('Power law')   # correct initial state
+
+        # Show/hide content when group box is toggled
+        def _toggle_box(checked):
+            for w in (nh_row, self._flux_model, self._photon_index,
+                      self._photon_index_lbl, self._temperature_kev,
+                      self._temperature_lbl, self._abundance,
+                      self._abundance_lbl, z_row, cosmo_row):
+                pass  # QGroupBox setChecked handles show/hide automatically
+        box.toggled.connect(_toggle_box)
+
+        self._flux_box = box
+        self._main_layout.addWidget(box)
+
+        # Background-thread references
+        self._nh_thread = None
+        self._z_thread  = None
+
+    def _fetch_nh(self):
+        """Auto-fetch Galactic N_H from HEASARC in a background thread."""
+        ra_text  = self._ra.text().strip()
+        dec_text = self._dec.text().strip()
+        if not ra_text or not dec_text:
+            QMessageBox.warning(self, 'N_H fetch',
+                                'Please fill in RA and Dec first.')
+            return
+        try:
+            from astropy.coordinates import SkyCoord
+            import astropy.units as u
+            sc = SkyCoord(ra_text, dec_text,
+                          unit=(u.hourangle if ':' in ra_text else u.deg, u.deg))
+            ra_deg  = sc.ra.deg
+            dec_deg = sc.dec.deg
+        except Exception:
+            try:
+                ra_deg  = float(ra_text)
+                dec_deg = float(dec_text)
+            except ValueError:
+                QMessageBox.warning(self, 'N_H fetch',
+                                    'Could not parse RA/Dec values.')
+                return
+        self._nh_fetch_btn.setText('Fetching…')
+        self._nh_fetch_btn.setEnabled(False)
+        self._nh_thread = _NHFetchThread(ra_deg, dec_deg, self)
+        self._nh_thread.nh_ready.connect(self._on_nh_ready)
+        self._nh_thread.failed.connect(self._on_nh_failed)
+        self._nh_thread.start()
+
+    def _on_nh_ready(self, nh):
+        self._nh_edit.setText(f'{nh:.4e}')
+        self._nh_fetch_btn.setText('Auto-fetch')
+        self._nh_fetch_btn.setEnabled(True)
+
+    def _on_nh_failed(self, msg):
+        QMessageBox.warning(self, 'N_H fetch failed', msg)
+        self._nh_fetch_btn.setText('Auto-fetch')
+        self._nh_fetch_btn.setEnabled(True)
+
+    def _fetch_z(self):
+        """Fill the redshift field from Sesame cache or NED query."""
+        # Use cached value from name resolver if available
+        if self._resolved_z is not None:
+            self._z_edit.setText(f'{self._resolved_z:.6f}')
+            return
+        # Otherwise query NED with the source name
+        src_name = getattr(self, '_src_name', None)
+        name = src_name.text().strip() if src_name else ''
+        if not name:
+            QMessageBox.information(
+                self, 'Redshift', 'No source name entered and no resolved z cached.')
+            return
+        self._z_fetch_btn.setText('Fetching…')
+        self._z_fetch_btn.setEnabled(False)
+        self._z_thread = _ZFetchThread(name, self)
+        self._z_thread.z_ready.connect(self._on_z_ready)
+        self._z_thread.failed.connect(self._on_z_failed)
+        self._z_thread.start()
+
+    def _on_z_ready(self, z):
+        self._z_edit.setText(f'{z:.6f}')
+        self._z_fetch_btn.setText('Auto-fetch')
+        self._z_fetch_btn.setEnabled(True)
+
+    def _on_z_failed(self, msg):
+        QMessageBox.warning(self, 'Redshift fetch failed', msg)
+        self._z_fetch_btn.setText('Auto-fetch')
+        self._z_fetch_btn.setEnabled(True)
+
+    def _flux_config(self) -> dict:
+        """Return flux/luminosity conversion config fields."""
+        if not getattr(self, '_flux_box', None) or not self._flux_box.isChecked():
+            return {'compute_flux': False}
+
+        model_text = self._flux_model.currentText()
+        model_map  = {
+            'Power law':      'powerlaw',
+            'Blackbody':      'blackbody',
+            'Bremsstrahlung': 'bremsstrahlung',
+            'APEC':           'apec',
+        }
+        model = model_map.get(model_text, 'powerlaw')
+
+        nh_text = self._nh_edit.text().strip()
+        nh_val  = None
+        if nh_text:
+            try:
+                nh_val = float(nh_text)
+            except ValueError:
+                pass
+
+        z_text = self._z_edit.text().strip()
+        z_val  = None
+        if z_text:
+            try:
+                z_val = float(z_text)
+            except ValueError:
+                pass
+
+        cosmo = self._cosmology.currentText()
+
+        return {
+            'compute_flux':    True,
+            'nh_cm2':          nh_val,
+            'spectral_model':  model,
+            'photon_index':    self._photon_index.value(),
+            'temperature_kev': self._temperature_kev.value(),
+            'abundance':       float(self._abundance.currentText()),
+            'redshift':        z_val,
+            'cosmology':       cosmo,
+            'h0':              self._h0_spin.value(),
+            'omega_m':         self._omegam_spin.value(),
+        }
+
     # ---- config extraction --------------------------------------------------
 
     def _base_config(self) -> dict:
-        return {
+        cfg = {
             'ra':                self._ra.text().strip(),
             'dec':               self._dec.text().strip(),
             'src_radius_arcsec': self._src_r.value(),
@@ -603,6 +916,8 @@ class _BaseForm(QWidget):
             'save_plots':        True,
             'src_name':          self._src_name.text().strip(),
         }
+        cfg.update(self._flux_config())
+        return cfg
 
     def get_config(self) -> dict:
         raise NotImplementedError
@@ -702,6 +1017,7 @@ class NuSTARForm(_BaseForm):
             '2.0 = soft source prior,  1.7 = harder,  0.0 = flat spectrum.')
         lay3.addRow('Photon index Γ', self._psf_gamma)
         self._main_layout.addWidget(box3)
+        self._add_flux_conversion()
         self._main_layout.addStretch()
 
     def get_config(self) -> dict:
@@ -758,6 +1074,7 @@ class SwiftForm(_BaseForm):
                     'is used automatically.  Only set this if you have a custom or\n'
                     'newer PSF coefficient file you want to use instead.')
         self._main_layout.addWidget(box2)
+        self._add_flux_conversion()
         self._main_layout.addStretch()
 
     def get_config(self) -> dict:
@@ -822,6 +1139,7 @@ class XMMForm(_BaseForm):
         self._add_background_mode()
         self._add_confidence()
         self._add_options()
+        self._add_flux_conversion()
         self._main_layout.addStretch()
 
     def get_config(self) -> dict:
@@ -926,12 +1244,13 @@ class ChandraForm(_BaseForm):
         lay3.addRow('Save plots',      self._save_plots)
         lay3.addRow(self._psf_label,   self._psf)
         self._main_layout.addWidget(box3)
+        self._add_flux_conversion()
         self._main_layout.addStretch()
 
     def get_config(self) -> dict:
         obsid = self._obsid.checked_items()
         if len(obsid) == 1: obsid = obsid[0]
-        return {
+        cfg = {
             'base_path':         self._base_path.text().strip(),
             'obsid':             obsid,
             'ra':                self._ra.text().strip(),
@@ -952,6 +1271,8 @@ class ChandraForm(_BaseForm):
             'gui_per_obs':       self._gui_per_obs.isChecked(),
             'save_plots':        True,
         }
+        cfg.update(self._flux_config())
+        return cfg
 
 
 # =============================================================================

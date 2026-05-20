@@ -168,11 +168,15 @@ def write_results_csv(rows, out_dir, obsid):
         'CR_net', 'CR_sigma',
         'CR_marg_aperture', 'CR_marg_total',
         'S_gehrels', 'CR_gehrels_aperture', 'CR_gehrels_total',
+        # Flux / luminosity columns (empty unless compute_flux=True)
+        'nh_cm2_used', 'pimms_instrument', 'spectral_model', 'model_params_str',
+        'flux_ul_cgs', 'flux_ul_unabs_cgs', 'lum_ul_cgs',
     ]
 
     with open(csv_path, 'w', newline='') as fh:
         writer = csv.DictWriter(fh, fieldnames=fieldnames,
                                 extrasaction='ignore',
+                                restval='',
                                 quoting=csv.QUOTE_NONNUMERIC)
         writer.writeheader()
         writer.writerows(rows)
@@ -846,5 +850,20 @@ def run_uplim(data_dir, obsid, ra, dec, **kwargs):
     # -- Write CSV ------------------------------------------------------------
     obsid_label = obsids[0] if n_obs == 1 else "+".join(obsids)
     write_results_csv(result['csv_rows'], out_dir, obsid_label)
+
+    # -- Flux / Luminosity conversion (optional) ------------------------------
+    if cfg.compute_flux and result['csv_rows']:
+        from ..flux_conversion import compute_flux_for_rows, pimms_instrument_code
+        mode = result['mode']
+        pimms_code = pimms_instrument_code('Swift', 'XRT', mode)
+        pimms_map  = {mode: pimms_code}
+        compute_flux_for_rows(
+            result['csv_rows'], 'Swift', cfg,
+            pimms_from_map=pimms_map,
+            e_lo_kev=e_lo, e_hi_kev=e_hi,
+            nh_cm2=cfg.nh_cm2,
+            ra_deg=src_coord.ra.deg,
+            dec_deg=src_coord.dec.deg)
+        write_results_csv(result['csv_rows'], out_dir, obsid_label)
 
     return result

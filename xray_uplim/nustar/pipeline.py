@@ -146,11 +146,15 @@ def write_results_csv(rows, out_dir, obsid_label):
         'CR_net', 'CR_sigma',
         'CR_marg_aperture', 'CR_marg_total',
         'S_gehrels', 'CR_gehrels_aperture', 'CR_gehrels_total',
+        # Flux / luminosity columns (empty unless compute_flux=True)
+        'nh_cm2_used', 'pimms_instrument', 'spectral_model', 'model_params_str',
+        'flux_ul_cgs', 'flux_ul_unabs_cgs', 'lum_ul_cgs',
     ]
 
     with open(csv_path, 'w', newline='') as fh:
         writer = csv.DictWriter(fh, fieldnames=fieldnames,
                                 extrasaction='ignore',
+                                restval='',
                                 quoting=csv.QUOTE_NONNUMERIC)
         writer.writeheader()
         writer.writerows(rows)
@@ -551,8 +555,7 @@ def combine_modules(results_list, cfg, obsid_label=None):
           f"[= B_total / N_bkg_total; consistent with B_scaled]")
     for r in results_list:
         print(f"  t_eff FPM-{r['module']}       : {r['t_eff_s']/1e3:.3f} ks")
-    print(f"  t_eff (combined)  : {t_comb/1e3:.3f} ks  "
-          f"[sum — correct for additive counts]")
+    print(f"  t_eff (combined)  : {t_comb/1e3:.3f} ks")
 
     # -- Combined EEF ---------------------------------------------------------
     eef_combined_info = None
@@ -892,6 +895,20 @@ def process_observations(cfg):
     # -- Write CSV + XLSX -----------------------------------------------------
     os.makedirs(out_dir_main, exist_ok=True)
     write_results_csv(all_csv_rows, out_dir_main, obsid_label)
+
+    # -- Flux / Luminosity conversion (optional) ------------------------------
+    if cfg.compute_flux:
+        from ..flux_conversion import compute_flux_for_rows
+        pimms_map = {m: 'NUSTAR Count Rate' for m in list(cfg.modules) + ['AB']}
+        compute_flux_for_rows(
+            all_csv_rows, 'NuSTAR', cfg,
+            pimms_from_map=pimms_map,
+            e_lo_kev=e_lo, e_hi_kev=e_hi,
+            nh_cm2=cfg.nh_cm2,
+            ra_deg=src_coord.ra.deg,
+            dec_deg=src_coord.dec.deg)
+        # Re-write CSV with flux columns added
+        write_results_csv(all_csv_rows, out_dir_main, obsid_label)
 
     print("\nDone.")
     return per_obs_raw

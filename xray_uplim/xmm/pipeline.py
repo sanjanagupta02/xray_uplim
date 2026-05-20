@@ -201,11 +201,15 @@ def write_results_csv(rows, out_dir, obsid):
         'CR_net', 'CR_sigma',
         'CR_marg_aperture', 'CR_marg_total',
         'S_gehrels', 'CR_gehrels_aperture', 'CR_gehrels_total',
+        # Flux / luminosity columns (empty unless compute_flux=True)
+        'nh_cm2_used', 'pimms_instrument', 'spectral_model', 'model_params_str',
+        'flux_ul_cgs', 'flux_ul_unabs_cgs', 'lum_ul_cgs',
     ]
 
     with open(csv_path, 'w', newline='') as fh:
         writer = csv.DictWriter(fh, fieldnames=fieldnames,
                                 extrasaction='ignore',
+                                restval='',
                                 quoting=csv.QUOTE_NONNUMERIC)
         writer.writeheader()
         writer.writerows(rows)
@@ -816,7 +820,9 @@ def process_observations(cfg: XMMConfig):
         # Attach ul_results for this instrument from all_csv_rows (recompute)
         area_ratio = per_obs_raw[obs_with_data[0]][instrument]['area_ratio']
         N_bkg_total = sum(per_obs_raw[oid][instrument]['N_bkg_raw'] for oid in obs_with_data)
-        eef_val2 = float(eef_str) if eef_str != 'N/A' else None
+        # Use full-precision eef_avg (not the 3-decimal-place display string) so
+        # the summary UL exactly matches what was written to the CSV.
+        eef_val2 = eef_avg if all(e is not None for e in eef_infos) else None
         ul_sum = _compute_ul_results(N_total, B_total, t_total, N_bkg_total,
                                       area_ratio, cfg.confidence_levels, eef=eef_val2)
         combined_results[instrument]['ul'] = ul_sum
@@ -846,6 +852,41 @@ def process_observations(cfg: XMMConfig):
     # -- Write CSV + XLSX -----------------------------------------------------
     os.makedirs(out_dir, exist_ok=True)
     if all_csv_rows:
+        write_results_csv(all_csv_rows, out_dir, obsid_label)
+
+    # -- Flux / Luminosity conversion (optional) ------------------------------
+    if cfg.compute_flux and all_csv_rows:
+        from ..flux_conversion import (
+            compute_flux_for_rows, pimms_instrument_code, detect_xmm_filter)
+
+        # Build per-instrument PIMMS map.
+        # Try to detect filter from the first available event file per instrument.
+        pimms_map = {}
+        for instrument in cfg.instruments:
+            obs_with_data = [oid for oid in obsids
+                             if instrument in per_obs_raw.get(oid, {})]
+            if not obs_with_data:
+                continue
+            # Try to read the filter from the event file header
+            try:
+                from .io import locate_files
+                obs_data_dir = os.path.join(
+                    cfg.data_dir, obs_with_data[0], 'ODF')
+                evt_file, _ = locate_files(
+                    obs_data_dir, obs_with_data[0], instrument, cfg)
+                filt = detect_xmm_filter(evt_file, instrument)
+            except Exception:
+                filt = 'Thin'
+            pimms_map[instrument] = pimms_instrument_code('XMM', instrument, filt)
+
+        compute_flux_for_rows(
+            all_csv_rows, 'XMM', cfg,
+            pimms_from_map=pimms_map,
+            e_lo_kev=e_lo, e_hi_kev=e_hi,
+            nh_cm2=cfg.nh_cm2,
+            ra_deg=src_coord.ra.deg,
+            dec_deg=src_coord.dec.deg)
+        # Re-write CSV with flux columns added
         write_results_csv(all_csv_rows, out_dir, obsid_label)
 
     print("\nDone.")

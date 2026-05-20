@@ -141,6 +141,20 @@ class SwiftConfig:
     save_plots  : bool = True
     src_name    : str  = ''   # optional — used in plot titles
 
+    # -- Flux / Luminosity conversion (optional) ----------------------------------
+    # Set compute_flux=True to convert count-rate upper limits to flux/luminosity.
+    # Requires internet access (WebPIMMS + HEASARC NH tool).
+    compute_flux    : bool  = False
+    nh_cm2          : float = None   # None = auto-fetch from HI4PI via HEASARC
+    spectral_model  : str   = 'powerlaw'   # 'powerlaw','blackbody','bremsstrahlung','apec'
+    photon_index    : float = 2.0          # power law photon index (Γ)
+    temperature_kev : float = 1.0          # kT in keV (blackbody / bremss / apec)
+    abundance       : float = 1.0          # solar abundance (apec only)
+    redshift        : float = None         # None = no luminosity output
+    cosmology       : str   = 'Planck18'   # 'Planck18', 'WMAP9', or 'custom'
+    h0              : float = 67.4         # only used when cosmology='custom'
+    omega_m         : float = 0.315        # only used when cosmology='custom'
+
     # =========================================================================
     # Instrument constants — do not edit
     # =========================================================================

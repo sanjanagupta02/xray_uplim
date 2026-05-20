@@ -222,11 +222,15 @@ def write_results_csv(rows, out_dir, obsid_label):
         'aprates_ul_aperture', 'aprates_ul_total',
         'CR_marg_aperture', 'CR_marg_total',
         'S_gehrels', 'CR_gehrels_aperture', 'CR_gehrels_total',
+        # Flux / luminosity columns (empty unless compute_flux=True)
+        'nh_cm2_used', 'pimms_instrument', 'spectral_model', 'model_params_str',
+        'flux_ul_cgs', 'flux_ul_unabs_cgs', 'lum_ul_cgs',
     ]
 
     with open(csv_path, 'w', newline='') as fh:
         writer = csv.DictWriter(fh, fieldnames=fieldnames,
                                 extrasaction='ignore',
+                                restval='',
                                 quoting=csv.QUOTE_NONNUMERIC)
         writer.writeheader()
         writer.writerows(rows)
@@ -903,6 +907,34 @@ def run_uplim(base_path, obsid, ra, dec, **kwargs):
     print()
 
     result = process_observation(cfg)
+
+    # ---- Flux / Luminosity conversion (optional) ----------------------------
+    if cfg.compute_flux and result.get('csv_rows'):
+        from ..flux_conversion import (
+            compute_flux_for_rows, pimms_instrument_code, detect_chandra_acis_type)
+        # Detect ACIS type from the first observation's event file
+        acis_type = 'ACIS-S'
+        if result.get('per_obs'):
+            first_evt = result['per_obs'][0].get('evt2', '')
+            if first_evt:
+                acis_type = detect_chandra_acis_type(first_evt)
+        pimms_code = pimms_instrument_code('Chandra', acis_type)
+        # Chandra CSV rows don't have a 'module' field; add a dummy key
+        # so compute_flux_for_rows can find the instrument.
+        # The obsid field serves as a fallback; we provide a direct mapping.
+        pimms_map  = {'': pimms_code}
+        # Patch rows to add a 'module' key pointing to acis_type
+        for row in result['csv_rows']:
+            row.setdefault('module', acis_type)
+        pimms_map[acis_type] = pimms_code
+        compute_flux_for_rows(
+            result['csv_rows'], 'Chandra', cfg,
+            pimms_from_map=pimms_map,
+            e_lo_kev=e_lo_kev, e_hi_kev=e_hi_kev,
+            nh_cm2=cfg.nh_cm2,
+            ra_deg=src_coord.ra.deg,
+            dec_deg=src_coord.dec.deg)
+        write_results_csv(result['csv_rows'], out_dir, obsid_label)
 
     # ---- Final summary ------------------------------------------------------
     print(f"\n{'='*70}")
