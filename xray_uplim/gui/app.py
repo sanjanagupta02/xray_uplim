@@ -15,7 +15,7 @@ import sys
 import tempfile
 from collections import OrderedDict
 
-from PySide6.QtCore    import Qt, QProcess, QSize, Signal, QEvent
+from PySide6.QtCore    import Qt, QProcess, QSize, Signal, QEvent, QThread, QTimer
 from PySide6.QtGui     import QFont, QColor, QTextCursor, QPixmap, \
                                QStandardItemModel, QStandardItem
 
@@ -344,6 +344,62 @@ def _cl_widget() -> tuple:
 
 
 # =============================================================================
+# =============================================================================
+# SIMBAD / NED name resolver — runs in a background thread
+# =============================================================================
+
+class _NameResolverThread(QThread):
+    """
+    Resolves a source name to RA/Dec using the CDS Sesame service
+    (https://cdsweb.u-strasbg.fr/cgi-bin/nph-sesame).
+
+    Sesame is the same lightweight endpoint used by Aladin, ESASky, and most
+    other astronomy tools — typically responds in under one second.  It queries
+    SIMBAD, NED, and VizieR in sequence and returns the first match.
+    No extra dependencies: uses only Python's built-in urllib and xml modules.
+    """
+    resolved = Signal(float, float, str)   # ra_deg, dec_deg, catalogue_name
+    failed   = Signal(str)                 # error message
+
+    def __init__(self, name, parent=None):
+        super().__init__(parent)
+        self._name = name
+
+    def run(self):
+        import urllib.request
+        import urllib.parse
+        import xml.etree.ElementTree as ET
+
+        url = ('https://cdsweb.u-strasbg.fr/cgi-bin/nph-sesame/-ox?'
+               + urllib.parse.quote(self._name))
+        try:
+            with urllib.request.urlopen(url, timeout=10) as resp:
+                xml_data = resp.read()
+        except Exception as exc:
+            self.failed.emit(f'Network error: {exc}')
+            return
+
+        try:
+            root = ET.fromstring(xml_data)
+            for resolver in root.iter('Resolver'):
+                ra_el  = resolver.find('jradeg')
+                dec_el = resolver.find('jdedeg')
+                if ra_el is not None and dec_el is not None:
+                    src = resolver.get('name', 'Sesame')
+                    if   'imbad' in src: src = 'SIMBAD'
+                    elif 'NED'   in src: src = 'NED'
+                    else:                src = 'Sesame'
+                    self.resolved.emit(float(ra_el.text),
+                                       float(dec_el.text), src)
+                    return
+        except Exception as exc:
+            self.failed.emit(f'Failed to parse Sesame response: {exc}')
+            return
+
+        self.failed.emit(f"'{self._name}' not found in SIMBAD or NED.")
+
+
+# =============================================================================
 # Per-observatory config forms
 # =============================================================================
 
@@ -364,11 +420,53 @@ class _BaseForm(QWidget):
 
     def _add_source_position(self):
         box, lay = _group('Source position')
+
+        # --- Name resolver row -------------------------------------------
+        name_row = QWidget()
+        name_lay = QHBoxLayout(name_row)
+        name_lay.setContentsMargins(0, 0, 0, 0)
+        name_lay.setSpacing(6)
+        self._src_name    = _line('', 'e.g.  SN 2012ap')
+        self._resolve_btn = QPushButton('Resolve →')
+        self._resolve_btn.setMaximumWidth(90)
+        self._resolve_btn.setToolTip(
+            'Query SIMBAD (then NED as fallback) and fill RA / Dec automatically.')
+        self._resolve_btn.clicked.connect(self._resolve_name)
+        name_lay.addWidget(self._src_name)
+        name_lay.addWidget(self._resolve_btn)
+        lay.addRow('Source name', name_row)
+
         self._ra  = _line('', 'HH:MM:SS.ss  or decimal deg')
         self._dec = _line('', '±DD:MM:SS.ss or decimal deg')
         lay.addRow('RA',  self._ra)
         lay.addRow('Dec', self._dec)
         self._main_layout.addWidget(box)
+        self._resolver_thread = None
+
+    # --- Name resolver slots -------------------------------------------------
+
+    def _resolve_name(self):
+        name = self._src_name.text().strip()
+        if not name:
+            return
+        self._resolve_btn.setText('Resolving…')
+        self._resolve_btn.setEnabled(False)
+        self._resolver_thread = _NameResolverThread(name, self)
+        self._resolver_thread.resolved.connect(self._on_resolved)
+        self._resolver_thread.failed.connect(self._on_resolve_failed)
+        self._resolver_thread.start()
+
+    def _on_resolved(self, ra_deg, dec_deg, catalogue):
+        self._ra.setText(f'{ra_deg:.6f}')
+        self._dec.setText(f'{dec_deg:.6f}')
+        self._resolve_btn.setText(f'✓ {catalogue}')
+        self._resolve_btn.setEnabled(True)
+        QTimer.singleShot(2500, lambda: self._resolve_btn.setText('Resolve →'))
+
+    def _on_resolve_failed(self, msg):
+        QMessageBox.warning(self, 'Name not resolved', msg)
+        self._resolve_btn.setText('Resolve →')
+        self._resolve_btn.setEnabled(True)
 
     def _add_aperture(self, src_def=60.0, bkg_def=200.0, factor_def=1.2,
                       psf_def=18.0, src_min=1.0, src_max=500.0,
