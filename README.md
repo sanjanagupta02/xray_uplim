@@ -278,13 +278,15 @@ Output → `{data_dir}/{obsid}/ul_products/`
 
 ### XMM-Newton EPIC
 ```
-data_dir/                 ← ODF working directory (after running emproc / epproc)
-├── *EMOS1*ImagingEvts.ds     ← MOS1 event file
-├── *EMOS2*ImagingEvts.ds     ← MOS2 event file
-├── *EPN*ImagingEvts.ds       ← pn event file
-├── mos1_expmap.fits           ← MOS1 exposure map (from eexpmap)
-├── mos2_expmap.fits           ← MOS2 exposure map
-└── pn_expmap.fits             ← pn exposure map
+data_dir/
+└── {obsid}/
+    └── ODF/                 ← ODF working directory (after running emproc / epproc)
+        ├── *EMOS1*ImagingEvts.ds     ← MOS1 event file
+        ├── *EMOS2*ImagingEvts.ds     ← MOS2 event file
+        ├── *EPN*ImagingEvts.ds       ← pn event file
+        ├── mos1_expmap.fits           ← MOS1 exposure map (from eexpmap)
+        ├── mos2_expmap.fits           ← MOS2 exposure map
+        └── pn_expmap.fits             ← pn exposure map
 ```
 Output → `{data_dir}/ul_products/`
 
