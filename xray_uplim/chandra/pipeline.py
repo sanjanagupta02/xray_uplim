@@ -798,7 +798,7 @@ def _save_plots(obs_raw, cfg, out_dir, e_lo, e_hi):
 
         fig, ax = plt.subplots(figsize=(5.5, 5.0))
         ax.imshow(img_data, origin='lower', cmap='gray',
-                  vmin=vmin, vmax=vmax, interpolation='nearest')
+                  vmin=vmin, vmax=vmax, interpolation='none')
 
         ax.add_patch(mpatches.Circle(
             (src_cx, src_cy), src_r_pix,

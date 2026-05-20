@@ -57,10 +57,12 @@ def select_regions_interactive(evt_x, evt_y, cx_evt, cy_evt, pscale_evt,
     x_lo, x_hi = cx_evt - pad_pix, cx_evt + pad_pix
     y_lo, y_hi = cy_evt - pad_pix, cy_evt + pad_pix
 
+    n_bins_x = max(1, int(round(x_hi - x_lo)))   # 1 bin per native event pixel
+    n_bins_y = max(1, int(round(y_hi - y_lo)))
     img, _, _ = np.histogram2d(
         evt_x, evt_y,
-        bins=[np.linspace(x_lo, x_hi, 301),
-              np.linspace(y_lo, y_hi, 301)])
+        bins=[np.linspace(x_lo, x_hi, n_bins_x + 1),
+              np.linspace(y_lo, y_hi, n_bins_y + 1)])
     img = img.T
 
     ext = [(x_lo - cx_evt) * pscale_evt, (x_hi - cx_evt) * pscale_evt,
@@ -104,7 +106,7 @@ def select_regions_interactive(evt_x, evt_y, cx_evt, cy_evt, pscale_evt,
     vmax = float(np.percentile(img[img > 0], 99)) if img.any() else 1.0
     ax_img.imshow(img, origin='lower', extent=ext,
                   cmap='viridis', aspect='equal',
-                  interpolation='nearest', vmin=0, vmax=max(1, vmax))
+                  interpolation='none', vmin=0, vmax=max(1, vmax))
     ax_img.set_xlabel('$\\Delta X$ (arcsec)', fontsize=14)
     ax_img.set_ylabel('$\\Delta Y$ (arcsec)', fontsize=14)
     ax_img.tick_params(axis='both', labelsize=12)

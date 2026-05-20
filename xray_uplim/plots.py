@@ -209,11 +209,12 @@ def region_image(evt_x, evt_y, cx_evt, cy_evt, pscale_evt,
     x_lo = cx_evt - pad_pix;  x_hi = cx_evt + pad_pix
     y_lo = cy_evt - pad_pix;  y_hi = cy_evt + pad_pix
 
-    n_bins = 300
+    n_bins_x = max(1, int(round(x_hi - x_lo)))   # 1 bin per native event pixel
+    n_bins_y = max(1, int(round(y_hi - y_lo)))
     img, _, _ = np.histogram2d(
         evt_x, evt_y,
-        bins=[np.linspace(x_lo, x_hi, n_bins + 1),
-              np.linspace(y_lo, y_hi, n_bins + 1)])
+        bins=[np.linspace(x_lo, x_hi, n_bins_x + 1),
+              np.linspace(y_lo, y_hi, n_bins_y + 1)])
     img = img.T   # rows = Y, cols = X
 
     # Arcsec offsets from source centre (used for circle positions + RA/Dec)
@@ -233,7 +234,7 @@ def region_image(evt_x, evt_y, cx_evt, cy_evt, pscale_evt,
     vmax = max(1, np.percentile(img[img > 0], 99)) if img.any() else 1
     ax.imshow(img, origin='lower', extent=extent,
               cmap='viridis', aspect='equal',
-              interpolation='nearest', vmin=0, vmax=vmax)
+              interpolation='none', vmin=0, vmax=vmax)
 
     # Source circle + crosshair
     r_src = cfg.src_radius_arcsec
