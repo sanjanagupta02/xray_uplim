@@ -146,6 +146,7 @@ class XMMConfig:
     use_gui     : bool = False
     gui_per_obs : bool = False
     save_plots  : bool = True
+    src_name    : str  = ''   # optional — used in plot titles
 
     # =========================================================================
     # Instrument constants — do not edit

@@ -815,8 +815,10 @@ def _save_plots(obs_raw, cfg, out_dir, e_lo, e_hi):
                 (bkg_cx, bkg_cy), bkg_r_pix,
                 color='orange', fill=False, lw=2.0, label='Bkg'))
 
+        src_name = getattr(cfg, 'src_name', '')
+        name_prefix = f"{src_name}  |  " if src_name else ""
         ax.set_title(
-            f"Chandra ACIS  {obs_raw['obsid_str']}  "
+            f"{name_prefix}Chandra ACIS  {obs_raw['obsid_str']}  "
             f"{e_lo:.1f}–{e_hi:.1f} keV\n"
             f"N_src={obs_raw['N_src']}  N_bkg={obs_raw['N_bkg_raw']}  "
             f"B={obs_raw['B_scaled']:.1f}", fontsize=9)

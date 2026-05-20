@@ -87,8 +87,10 @@ def radial_profile(evt_x, evt_y, cx_evt, cy_evt, pscale_evt,
 
     ax.set_xlabel('Radius (arcsec)')
     ax.set_ylabel('Surface density (cts arcsec$^{-2}$)')
-    ax.set_title(
-        f'{label}  |  {e_lo:.1f}–{e_hi:.1f} keV  |  OBSID {obsid}')
+    src_name = getattr(cfg, 'src_name', '')
+    title = (f'{src_name}  |  ' if src_name else '') + \
+            f'{label}  |  {e_lo:.1f}–{e_hi:.1f} keV  |  OBSID {obsid}'
+    ax.set_title(title)
     ax.legend(loc='upper right')
     ax.set_yscale('log')
     ax.set_xlim(0, max_r)
@@ -269,9 +271,10 @@ def region_image(evt_x, evt_y, cx_evt, cy_evt, pscale_evt,
                              label=f'Bkg inner ({r_in:.0f}")'))
 
     ax.legend(loc='upper right', framealpha=0.8, fontsize=8)
-    ax.set_title(
-        f'{label}  |  {e_lo:.1f}–{e_hi:.1f} keV  |  OBSID {obsid}',
-        fontsize=10)
+    src_name = getattr(cfg, 'src_name', '')
+    title = (f'{src_name}  |  ' if src_name else '') + \
+            f'{label}  |  {e_lo:.1f}–{e_hi:.1f} keV  |  OBSID {obsid}'
+    ax.set_title(title, fontsize=10)
 
     # ---- Axes: RA/Dec labels when source position is known ------------------
     if src_ra_deg is not None and src_dec_deg is not None:

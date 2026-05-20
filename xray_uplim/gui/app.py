@@ -601,6 +601,7 @@ class _BaseForm(QWidget):
             'use_gui':           self._use_gui.isChecked(),
             'gui_per_obs':       self._gui_per_obs.isChecked(),
             'save_plots':        True,
+            'src_name':          self._src_name.text().strip(),
         }
 
     def get_config(self) -> dict:

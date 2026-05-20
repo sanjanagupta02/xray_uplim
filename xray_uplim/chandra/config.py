@@ -141,6 +141,7 @@ class ChandraConfig:
     use_gui     : bool = True
     gui_per_obs : bool = False
     save_plots  : bool = True
+    src_name    : str  = ''   # optional — used in plot titles
 
     # =========================================================================
     # Instrument constants — do not edit
