@@ -58,7 +58,7 @@ PySide6 ≥ 6.4 is an optional dependency installed only by `pip install ".[gui]
 ### 1. Clone the repository
 
 ```bash
-git clone https://github.com/sanjana207298/xray_uplim.git
+git clone https://github.com/sanjanagupta02/xray_uplim.git
 cd xray_uplim
 ```
 
