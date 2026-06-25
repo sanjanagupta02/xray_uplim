@@ -120,6 +120,14 @@ class SwiftConfig:
     # Leave empty to use the bundled psfconst_xrt.fits (same file as HEASoft 6.36).
     # Set to an absolute path if you have a newer or custom PSF coefficient file.
 
+    # -- Spectral weighting for EEF -------------------------------------------
+    psf_gamma : float = 2.0
+    # Photon index used when computing the spectral-weighted EEF.
+    # The EEF is evaluated at 20 energy points across the band, each weighted
+    # by E^{-Gamma} dE, and averaged — matching the NuSTAR treatment.
+    # Gamma=2 is a reasonable prior for X-ray binaries and AGN.
+    # Use Gamma=1.7 for a harder spectrum; Gamma=0 for a flat (equal-weight) prior.
+
     # -- Background -----------------------------------------------------------
     bkg_mode : str               = 'annulus'
     bkg_ra   : Union[str, float] = ""

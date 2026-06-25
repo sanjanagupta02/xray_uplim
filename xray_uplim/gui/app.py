@@ -1074,6 +1074,13 @@ class SwiftForm(_BaseForm):
                     'is used automatically.  Only set this if you have a custom or\n'
                     'newer PSF coefficient file you want to use instead.')
         self._main_layout.addWidget(box2)
+
+        box3, lay3 = _group('PSF spectral weighting')
+        self._psf_gamma = _spin(2.0, 0.0, 5.0, 0.1, 2,
+            'Photon index Γ used to compute the spectral-weighted EEF.\n'
+            '2.0 = soft source prior,  1.7 = harder,  0.0 = flat spectrum.')
+        lay3.addRow('Photon index Γ', self._psf_gamma)
+        self._main_layout.addWidget(box3)
         self._add_flux_conversion()
         self._main_layout.addStretch()
 
@@ -1082,9 +1089,10 @@ class SwiftForm(_BaseForm):
         if len(obsid) == 1: obsid = obsid[0]
         cfg = self._base_config()
         cfg.update({
-            'data_dir': self._data_dir.text().strip(),
-            'obsid':    obsid,
-            'psf_file': self._psf_file.text().strip(),
+            'data_dir':  self._data_dir.text().strip(),
+            'obsid':     obsid,
+            'psf_file':  self._psf_file.text().strip(),
+            'psf_gamma': self._psf_gamma.value(),
         })
         return cfg
 
@@ -1139,6 +1147,13 @@ class XMMForm(_BaseForm):
         self._add_background_mode()
         self._add_confidence()
         self._add_options()
+
+        box3, lay3 = _group('PSF spectral weighting')
+        self._psf_gamma = _spin(2.0, 0.0, 5.0, 0.1, 2,
+            'Photon index Γ used to compute the spectral-weighted EEF.\n'
+            '2.0 = soft source prior,  1.7 = harder,  0.0 = flat spectrum.')
+        lay3.addRow('Photon index Γ', self._psf_gamma)
+        self._main_layout.addWidget(box3)
         self._add_flux_conversion()
         self._main_layout.addStretch()
 
@@ -1154,6 +1169,7 @@ class XMMForm(_BaseForm):
             'obsid':       obsid,
             'instruments': instruments,
             'psf_dir':     self._psf_dir.text().strip(),
+            'psf_gamma':   self._psf_gamma.value(),
         })
         return cfg
 

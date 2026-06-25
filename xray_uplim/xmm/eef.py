@@ -238,11 +238,75 @@ def interpolate_xmm_psf(energy_ev: float, theta_arcmin: float,
 # Public API
 # ---------------------------------------------------------------------------
 
+def _xmm_spectral_weighted_eef(psf_grid, energies_ccf, thetas_ccf,
+                                theta_use, r_src_arcsec,
+                                e_lo_kev, e_hi_kev,
+                                gamma=2.0, n_samples=20, instrument=''):
+    """
+    Compute the spectral-weighted XMM EEF by numerically integrating over the band.
+
+        EEF_eff = integral_{e_lo}^{e_hi} EEF(E, theta) * E^{-gamma} dE
+                  / integral_{e_lo}^{e_hi} E^{-gamma} dE
+
+    evaluated at 20 uniformly-sampled energy points using the trapezoidal rule.
+
+    Returns
+    -------
+    eef_eff    : float  spectral-weighted EEF
+    energy_eff : float  spectral-weighted mean energy (eV) — display only
+    """
+    e_lo_ev = e_lo_kev * 1000.0
+    e_hi_ev = e_hi_kev * 1000.0
+    sample_ev = np.linspace(e_lo_ev, e_hi_ev, n_samples)
+
+    # Warn once if band overlaps outside the CCF energy range
+    if e_lo_ev < energies_ccf[0] or e_hi_ev > energies_ccf[-1]:
+        warnings.warn(
+            f"{instrument}: energy band {e_lo_ev:.0f}–{e_hi_ev:.0f} eV "
+            f"extends outside the CCF PSF grid "
+            f"({energies_ccf[0]:.0f}–{energies_ccf[-1]:.0f} eV). "
+            "Energies outside the grid are clamped to the nearest edge.",
+            UserWarning, stacklevel=3)
+
+    # Weights: E^{-gamma} in keV units (eV/1000)
+    if abs(gamma) < 1e-9:
+        weights = np.ones(n_samples)
+    else:
+        weights = (sample_ev / 1000.0) ** (-gamma)
+
+    eef_values = np.empty(n_samples)
+    for i, e_ev in enumerate(sample_ev):
+        psf_img = interpolate_xmm_psf(e_ev, theta_use,
+                                       psf_grid, energies_ccf, thetas_ccf)
+        eef_values[i] = integrate_eef(psf_img, r_src_arcsec, XMM_PSF_PSCALE)
+
+    total_w = np.trapz(weights, sample_ev)
+    if total_w <= 0.0:
+        mid_ev = 0.5 * (e_lo_ev + e_hi_ev)
+        psf_img = interpolate_xmm_psf(mid_ev, theta_use,
+                                       psf_grid, energies_ccf, thetas_ccf)
+        return integrate_eef(psf_img, r_src_arcsec, XMM_PSF_PSCALE), mid_ev
+
+    eef_eff    = float(np.trapz(weights * eef_values, sample_ev) / total_w)
+    energy_eff = float(np.trapz(weights * sample_ev,  sample_ev) / total_w)
+    return float(np.clip(eef_eff, 0.0, 1.0)), energy_eff
+
+
 def compute_xmm_eef(cfg: XMMConfig, instrument: str, evt_hdr,
                      r_src_arcsec: float,
-                     e_lo_kev: float, e_hi_kev: float) -> dict:
+                     e_lo_kev: float, e_hi_kev: float,
+                     psf_gamma: float = 2.0) -> dict:
     """
     Compute the EEF for an XMM-Newton source aperture from the CCF PSF.
+
+    The EEF is computed as a spectral-weighted average over the energy band:
+
+        EEF_eff = integral EEF(E, theta) * E^{-gamma} dE
+                  / integral E^{-gamma} dE
+
+    evaluated numerically at 20 energy points across the band.  This matches
+    the NuSTAR treatment and avoids the error of evaluating at the band-centre
+    (which for 0.5–10 keV with Gamma=2 gives ~1.4 keV vs the naive 5.25 keV).
 
     Steps
     -----
@@ -250,9 +314,9 @@ def compute_xmm_eef(cfg: XMMConfig, instrument: str, evt_hdr,
     2. Compute source off-axis angle θ from the EVENTS header pointing
        (RA_PNT / DEC_PNT — written by SAS epproc/emproc).
     3. Load the full (energy × angle) PSF grid from the CCF.
-    4. Interpolate the PSF at band-centre energy and θ using 2-D bilinear
-       interpolation across both axes simultaneously.
-    5. Integrate the EEF within r_src_arcsec of the PSF image centre.
+    4. For each of 20 energy samples across the band, interpolate the PSF
+       at (E, θ) and integrate the EEF within r_src_arcsec.
+    5. Compute the spectral-weighted mean EEF using E^{-gamma} weights.
 
     Parameters
     ----------
@@ -262,16 +326,18 @@ def compute_xmm_eef(cfg: XMMConfig, instrument: str, evt_hdr,
     r_src_arcsec : float  — source aperture radius in arcseconds
     e_lo_kev     : float  — lower energy bound (keV)
     e_hi_kev     : float  — upper energy bound (keV)
+    psf_gamma    : float  — photon index for spectral weighting (default 2.0)
 
     Returns
     -------
     dict with keys:
-        eef              float        EEF at r_src_arcsec  (primary value)
+        eef              float        spectral-weighted EEF at r_src_arcsec
         theta_arcmin     float        source off-axis angle (arcmin)
         pointing_ra      float        telescope pointing RA (degrees)
         pointing_dec     float        telescope pointing Dec (degrees)
         psf_file         str          CCF path used
-        energy_ev        float        band-centre energy used for interpolation
+        energy_ev        float        spectral-weighted mean energy (eV) — display
+        psf_gamma        float        photon index used
         extrapolated     bool         True if θ > 15' (beyond CCF limit)
         eef_capped       float|None   EEF at θ = 15' if extrapolated, else None
     """
@@ -313,33 +379,20 @@ def compute_xmm_eef(cfg: XMMConfig, instrument: str, evt_hdr,
     # -- Step 3: load PSF grid ------------------------------------------------
     psf_grid, energies, thetas = load_xmm_psf_grid(ccf_path)
 
-    # -- Step 4: interpolate --------------------------------------------------
-    # Band-centre energy in eV
-    energy_ev = (e_lo_kev + e_hi_kev) / 2.0 * 1000.0
-
-    # Warn if band centre is outside the CCF energy range (unusual)
-    if energy_ev < energies[0] or energy_ev > energies[-1]:
-        warnings.warn(
-            f"{instrument}: band-centre energy {energy_ev:.0f} eV is outside "
-            f"the CCF PSF grid ({energies[0]:.0f}–{energies[-1]:.0f} eV). "
-            "Clamping to the nearest grid edge.",
-            UserWarning, stacklevel=2)
-
-    psf_image = interpolate_xmm_psf(energy_ev, theta_use,
-                                     psf_grid, energies, thetas)
+    # -- Step 4: spectral-weighted EEF ----------------------------------------
+    eef, energy_eff_ev = _xmm_spectral_weighted_eef(
+        psf_grid, energies, thetas, theta_use, r_src_arcsec,
+        e_lo_kev, e_hi_kev, gamma=psf_gamma, instrument=instrument)
 
     # If extrapolated, also compute EEF at the capped angle for reference
     if extrapolated:
-        psf_capped = interpolate_xmm_psf(energy_ev, XMM_MAX_OFFAXIS,
-                                          psf_grid, energies, thetas)
-        eef_capped = integrate_eef(psf_capped, r_src_arcsec, XMM_PSF_PSCALE)
-
-    # -- Step 5: integrate EEF ------------------------------------------------
-    eef = integrate_eef(psf_image, r_src_arcsec, XMM_PSF_PSCALE)
+        eef_capped, _ = _xmm_spectral_weighted_eef(
+            psf_grid, energies, thetas, XMM_MAX_OFFAXIS, r_src_arcsec,
+            e_lo_kev, e_hi_kev, gamma=psf_gamma, instrument=instrument)
 
     print(f"  {instrument}: EEF={eef:.4f}  "
           f"θ={theta:.2f}'  "
-          f"E_centre={energy_ev:.0f} eV  "
+          f"E_eff={energy_eff_ev:.0f} eV (Γ={psf_gamma:.1f})  "
           f"r={r_src_arcsec:.1f}\"")
 
     return {
@@ -348,7 +401,8 @@ def compute_xmm_eef(cfg: XMMConfig, instrument: str, evt_hdr,
         'pointing_ra':  pt_ra,
         'pointing_dec': pt_dec,
         'psf_file':     ccf_path,
-        'energy_ev':    energy_ev,
+        'energy_ev':    energy_eff_ev,
+        'psf_gamma':    psf_gamma,
         'extrapolated': extrapolated,
         'eef_capped':   eef_capped,
     }

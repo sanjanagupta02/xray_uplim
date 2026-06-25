@@ -216,12 +216,59 @@ def _compute_eef_single(par, energy_kev, theta_arcmin, r_arcsec):
 # Main entry point
 # ---------------------------------------------------------------------------
 
-def compute_swift_eef(cfg, evt_hdr, r_src_arcsec, e_lo_kev, e_hi_kev):
+def _spectral_weighted_eef(par, theta_arcmin, r_src_arcsec,
+                            e_lo_kev, e_hi_kev, gamma=2.0, n_samples=20):
+    """
+    Compute the spectral-weighted EEF by numerically integrating over the band.
+
+    EEF_eff = integral_{e_lo}^{e_hi} EEF(E, theta) * E^{-gamma} dE
+              / integral_{e_lo}^{e_hi} E^{-gamma} dE
+
+    Uses uniform sampling with the trapezoidal rule.
+
+    Returns
+    -------
+    eef_eff     : float   weighted EEF
+    energy_eff  : float   spectral-weighted mean energy (keV) — for display only
+    """
+    energies = np.linspace(e_lo_kev, e_hi_kev, n_samples)
+
+    # Guard: if gamma is very close to zero treat all weights as equal
+    if abs(gamma) < 1e-9:
+        weights = np.ones(n_samples)
+    else:
+        # Avoid division by zero at E=0 (shouldn't happen for X-ray bands)
+        weights = energies ** (-gamma)
+
+    eef_values = np.array([
+        _compute_eef_single(par, e, theta_arcmin, r_src_arcsec)
+        for e in energies
+    ])
+
+    total_weight = np.trapz(weights, energies)
+    if total_weight <= 0.0:
+        # Fallback: plain midpoint
+        mid = 0.5 * (e_lo_kev + e_hi_kev)
+        return _compute_eef_single(par, mid, theta_arcmin, r_src_arcsec), mid
+
+    eef_eff    = float(np.trapz(weights * eef_values, energies) / total_weight)
+    energy_eff = float(np.trapz(weights * energies,   energies) / total_weight)
+    return float(np.clip(eef_eff, 0.0, 1.0)), energy_eff
+
+
+def compute_swift_eef(cfg, evt_hdr, r_src_arcsec, e_lo_kev, e_hi_kev,
+                      psf_gamma=2.0):
     """
     Compute the Swift XRT EEF for a given source aperture radius.
 
-    The EEF is evaluated at the band mid-energy and source off-axis angle,
-    matching the approach used by XIMAGE/SOSTA.
+    The EEF is computed as a spectral-weighted average over the energy band,
+    using the King+Gaussian PSF model from psfconst_xrt.fits.  This matches
+    the approach used by NuSTAR (spectral combination of per-band PSF files).
+
+        EEF_eff = integral EEF(E, theta) * E^{-gamma} dE
+                  / integral E^{-gamma} dE
+
+    evaluated numerically at 20 energy points across the band.
 
     Parameters
     ----------
@@ -230,13 +277,15 @@ def compute_swift_eef(cfg, evt_hdr, r_src_arcsec, e_lo_kev, e_hi_kev):
     r_src_arcsec : float         source aperture radius in arcsec
     e_lo_kev     : float         energy band lower bound (keV)
     e_hi_kev     : float         energy band upper bound (keV)
+    psf_gamma    : float         photon index for spectral weighting (default 2.0)
 
     Returns
     -------
     dict with keys:
-        eef           : float   EEF at r_src_arcsec (0–1)
+        eef           : float   spectral-weighted EEF at r_src_arcsec (0–1)
         theta_arcmin  : float   source off-axis angle (arcmin)
-        energy_kev    : float   mid-band energy used for evaluation (keV)
+        energy_kev    : float   spectral-weighted mean energy (keV) — display only
+        psf_gamma     : float   photon index used
         pointing_ra   : float   XRT pointing RA (deg)
         pointing_dec  : float   XRT pointing Dec (deg)
         psf_file      : str     path to psfconst_xrt.fits used
@@ -254,9 +303,6 @@ def compute_swift_eef(cfg, evt_hdr, r_src_arcsec, e_lo_kev, e_hi_kev):
     theta_arcmin, pt_ra, pt_dec = _off_axis_angle(
         src_coord.ra.deg, src_coord.dec.deg, evt_hdr)
 
-    # Band mid-energy for PSF evaluation
-    energy_kev = 0.5 * (e_lo_kev + e_hi_kev)
-
     # Extrapolation check
     extrapolated = theta_arcmin > SWIFT_MAX_OFFAXIS
     eef_capped   = None
@@ -266,16 +312,17 @@ def compute_swift_eef(cfg, evt_hdr, r_src_arcsec, e_lo_kev, e_hi_kev):
             f"field of view ({SWIFT_MAX_OFFAXIS}'), likely a background "
             "observation. EEF capped at maximum off-axis value.",
             UserWarning, stacklevel=2)
-        eef_capped = _compute_eef_single(
-            par, energy_kev, SWIFT_MAX_OFFAXIS, r_src_arcsec)
+        eef_capped, _ = _spectral_weighted_eef(
+            par, SWIFT_MAX_OFFAXIS, r_src_arcsec, e_lo_kev, e_hi_kev, psf_gamma)
         theta_for_eef = SWIFT_MAX_OFFAXIS
     else:
         theta_for_eef = theta_arcmin
 
-    eef = _compute_eef_single(par, energy_kev, theta_for_eef, r_src_arcsec)
+    eef, energy_eff_kev = _spectral_weighted_eef(
+        par, theta_for_eef, r_src_arcsec, e_lo_kev, e_hi_kev, psf_gamma)
 
     print(f"  XRT PSF: theta={theta_arcmin:.2f}'  "
-          f"E={energy_kev:.2f} keV  "
+          f"E_eff={energy_eff_kev:.2f} keV (Gamma={psf_gamma:.1f})  "
           f"r={r_src_arcsec:.1f}\"  "
           f"EEF={eef:.4f}"
           + (" [EXTRAPOLATED]" if extrapolated else ""))
@@ -283,7 +330,8 @@ def compute_swift_eef(cfg, evt_hdr, r_src_arcsec, e_lo_kev, e_hi_kev):
     return {
         'eef'          : eef,
         'theta_arcmin' : theta_arcmin,
-        'energy_kev'   : energy_kev,
+        'energy_kev'   : energy_eff_kev,
+        'psf_gamma'    : psf_gamma,
         'pointing_ra'  : pt_ra,
         'pointing_dec' : pt_dec,
         'psf_file'     : psf_file,

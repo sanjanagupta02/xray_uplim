@@ -485,14 +485,16 @@ def _load_and_extract_instrument(instrument, obsid_str, obs_data_dir, cfg,
     try:
         eef_info = compute_xmm_eef(
             cfg, instrument, evt_hdr,
-            cfg.src_radius_arcsec, e_lo, e_hi)
+            cfg.src_radius_arcsec, e_lo, e_hi,
+            psf_gamma=cfg.psf_gamma)
 
         print(f"\n  -- EEF (Encircled Energy Fraction) ----------------------------")
         print(f"    Off-axis angle   : {eef_info['theta_arcmin']:.3f} arcmin")
         print(f"    Pointing         : RA={eef_info['pointing_ra']:.5f}  "
               f"Dec={eef_info['pointing_dec']:.5f}")
         print(f"    PSF file         : {os.path.basename(eef_info['psf_file'])}")
-        print(f"    Band-centre E    : {eef_info['energy_ev']:.0f} eV")
+        print(f"    Spectral-wtd E   : {eef_info['energy_ev']:.0f} eV  "
+              f"(Γ={eef_info['psf_gamma']:.1f})")
         print(f"    EEF at {cfg.src_radius_arcsec:.0f}\"       : {eef_info['eef']:.4f}")
         if eef_info['extrapolated']:
             print(f"    !! Off-axis angle exceeds CCF limit (15'). "

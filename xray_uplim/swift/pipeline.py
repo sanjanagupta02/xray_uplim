@@ -412,13 +412,15 @@ def _extract_counts_exposure_eef(cfg, obs, bkg_cx_evt, bkg_cy_evt, e_lo, e_hi):
     eef_info = None
     try:
         eef_info = compute_swift_eef(
-            cfg, obs['evt_hdr'], cfg.src_radius_arcsec, e_lo, e_hi)
+            cfg, obs['evt_hdr'], cfg.src_radius_arcsec, e_lo, e_hi,
+            psf_gamma=cfg.psf_gamma)
         print(f"\n  -- EEF (Encircled Energy Fraction) ----------------------------")
         print(f"    Off-axis angle   : {eef_info['theta_arcmin']:.3f} arcmin")
         print(f"    Pointing         : RA={eef_info['pointing_ra']:.5f}  "
               f"Dec={eef_info['pointing_dec']:.5f}")
         print(f"    PSF file         : {os.path.basename(eef_info['psf_file'])}")
-        print(f"    Band-centre E    : {eef_info['energy_kev']:.3f} keV")
+        print(f"    Spectral-wtd E   : {eef_info['energy_kev']:.3f} keV  "
+              f"(Gamma={eef_info['psf_gamma']:.1f})")
         print(f"    EEF at {cfg.src_radius_arcsec:.0f}\"       : {eef_info['eef']:.4f}")
         if eef_info['extrapolated']:
             print(f"    !! Off-axis angle exceeds XRT FOV ({eef_info['theta_arcmin']:.1f}'). "
