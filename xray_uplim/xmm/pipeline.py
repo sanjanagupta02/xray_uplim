@@ -283,6 +283,8 @@ def _save_plots(evt_x, evt_y, cx_evt, cy_evt, pscale_evt,
                       RuntimeWarning, stacklevel=2)
         return
 
+    os.makedirs(out_dir, exist_ok=True)
+
     radial_profile(
         evt_x, evt_y, cx_evt, cy_evt, pscale_evt,
         instrument, e_lo, e_hi, obsid_str, cfg, out_dir)
@@ -684,7 +686,7 @@ def process_observations(cfg: XMMConfig):
                     instrument, obsid_str, obs_data_dir, cfg_obs,
                     run_gui=run_gui_this)
                 per_obs_raw[obsid_str][instrument] = raw
-            except FileNotFoundError as exc:
+            except (FileNotFoundError, RuntimeError) as exc:
                 warnings.warn(
                     f"\nSkipping {instrument} obs {obsid_str}: {exc}",
                     UserWarning, stacklevel=2)
